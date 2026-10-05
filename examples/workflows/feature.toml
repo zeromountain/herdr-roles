@@ -1,0 +1,38 @@
+# plan → build → review →(CHANGES 이면) fix → review → ... (APPROVED 이면 종료)
+# - 기본은 반자동: 단계가 끝나면 알림만 보내고, `roles advance` 로 다음 역할에게 전달합니다.
+# - `auto = true` 인 단계는 자동 전달합니다.
+# - 루프 방지: [workflow].max_hops, 단계별 max_iterations
+
+[workflow]
+name = "feature"
+max_hops = 12
+
+[[step]]
+id = "plan"
+role = "planner"
+
+[[step]]
+id = "build"
+role = "implementer"
+from = "plan"
+handoff = "last_output"        # last_output | git_diff | file:<path> | none
+auto = false
+template = "아래 계획대로 구현하세요:\n\n{{input}}"
+
+[[step]]
+id = "review"
+role = "reviewer"
+from = ["build", "fix"]        # fix 가 끝나면 다시 리뷰: review ⇄ fix 루프 (fix.max_iterations 로 종료)
+handoff = "git_diff"
+auto = true
+template = "다음 변경을 리뷰하세요 (수정 필요 시 첫 줄에 CHANGES, 통과 시 APPROVED):\n\n{{input}}"
+
+[[step]]
+id = "fix"
+role = "implementer"
+from = "review"
+when = "output ~ /CHANGES/"     # 리뷰어 출력에 CHANGES 가 있을 때만
+handoff = "last_output"
+auto = true
+max_iterations = 3
+template = "리뷰 지적을 반영해 수정하세요:\n\n{{input}}"

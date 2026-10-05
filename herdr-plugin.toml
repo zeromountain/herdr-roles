@@ -1,0 +1,71 @@
+id = "herdr-roles"
+name = "Herdr Roles"
+version = "0.1.0"
+min_herdr_version = "0.9.1"
+description = "pane에 역할을 부여하고, 메인 세션에서 팀을 구성(나머지 역할 pane 스폰)하며, 역할 간 작업을 인계하는 워크플로우"
+platforms = ["macos", "linux"]
+
+# herdr drops pane metadata on restart; re-project it from the state files.
+[[startup]]
+command = ["python3", "bin/roles", "reapply", "--quiet"]
+
+# Actions run against the *focused* pane. For a team started from an agent's own shell, prefer
+# `bin/roles team-up` directly: it uses $HERDR_PANE_ID, i.e. the pane that really called it.
+[[actions]]
+id = "team-up"
+title = "Roles: 팀 구성 (포커스 pane = lead)"
+contexts = ["pane"]
+command = ["python3", "bin/roles", "team-up"]
+
+[[actions]]
+id = "team-down"
+title = "Roles: 팀 해산 (스폰한 pane만 닫기)"
+contexts = ["pane"]
+command = ["python3", "bin/roles", "team-down"]
+
+[[actions]]
+id = "status"
+title = "Roles: 상태 알림"
+contexts = ["pane"]
+command = ["python3", "bin/roles", "status", "--notify"]
+
+[[actions]]
+id = "assign"
+title = "Roles: 메뉴 열기 (역할 지정/팀/워크플로우)"
+contexts = ["pane"]
+command = ["python3", "bin/roles", "open-picker"]
+
+[[actions]]
+id = "advance"
+title = "Roles: 대기 중인 인계 전달"
+contexts = ["pane"]
+command = ["python3", "bin/roles", "advance"]
+
+[[actions]]
+id = "reapply"
+title = "Roles: 표시 재적용"
+contexts = ["pane"]
+command = ["python3", "bin/roles", "reapply"]
+
+# Event hooks: stateless dispatcher, exits immediately for workspaces without state.
+[[events]]
+on = "pane.agent_status_changed"
+command = ["python3", "bin/roles", "dispatch"]
+
+[[events]]
+on = "pane.closed"
+command = ["python3", "bin/roles", "dispatch"]
+
+[[panes]]
+id = "picker"
+title = "Roles"
+placement = "popup"
+width = "60%"
+height = "60%"
+command = ["python3", "bin/roles", "pick"]
+
+[[panes]]
+id = "board"
+title = "Roles board"
+placement = "split"
+command = ["python3", "bin/roles", "board"]

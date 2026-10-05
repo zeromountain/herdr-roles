@@ -1,0 +1,7 @@
+[settings]
+default_team = "dev"
+default_workflow = "feature"
+max_spawn = 8              # team-up 한 번에 새로 만들 수 있는 pane 상한
+handoff_lines = 200        # 인계 때 읽어 오는 pane 출력 줄 수
+spawn_timeout_ms = 60000   # agent start 준비 대기
+idle_grace_s = 10          # working 을 못 본 idle/done 을 완료로 인정하기까지의 유예 시간

@@ -1,0 +1,31 @@
+# 역할 정의. `agent` 는 `herdr agent start --kind` 값(claude, codex, gemini, opencode, ...)입니다.
+# agent 도 command 도 없으면 "그냥 셸" 역할이 됩니다.
+
+[roles.planner]
+label = "Planner"
+agent = "claude"
+prompt = """
+설계 담당입니다. 코드는 수정하지 말고, 구현 계획(작업 단위·영향 파일·위험)만 작성하세요.
+다른 역할에 넘길 결과는 <<<HANDOFF ... >>> 블록 안에 넣으세요."""
+
+[roles.implementer]
+label = "Implementer"
+agent = "codex"
+prompt = """
+구현 담당입니다. 받은 계획대로 코드를 수정하세요. 끝나면 변경 요약을 <<<HANDOFF ... >>> 블록으로 남기세요."""
+
+[roles.reviewer]
+label = "Reviewer"
+agent = "claude"
+prompt = """
+리뷰 담당입니다. 받은 diff만 검토하세요. 수정이 필요하면 첫 줄에 `CHANGES` 라고 쓰고 항목을 나열,
+문제가 없으면 `APPROVED` 라고 쓰세요."""
+
+[roles.tester]
+label = "Tester"
+agent = "claude"
+prompt = "테스트 담당입니다. 변경에 대한 테스트를 작성/실행하고 결과를 요약하세요."
+
+[roles.runner]
+label = "Runner"
+# command = "pnpm dev"   # 에이전트 없이 명령만 실행하는 역할 (개발 서버, test watch 등)

@@ -1,0 +1,30 @@
+id = "roles-spike"
+name = "roles spike"
+version = "0.0.1"
+min_herdr_version = "0.9.1"
+description = "Throwaway spike: records env/context/events to find out the real plugin contract"
+
+[[startup]]
+command = ["sh", "dump.sh", "startup"]
+
+[[actions]]
+id = "dump"
+title = "Spike: dump context"
+contexts = ["pane"]
+command = ["sh", "dump.sh", "action"]
+
+[[events]]
+on = "pane.agent_status_changed"
+command = ["sh", "dump.sh", "ev-agent-status"]
+
+[[events]]
+on = "pane.created"
+command = ["sh", "dump.sh", "ev-pane-created"]
+
+[[events]]
+on = "pane.closed"
+command = ["sh", "dump.sh", "ev-pane-closed"]
+
+[[events]]
+on = "worktree.created"
+command = ["sh", "dump.sh", "ev-worktree-created"]

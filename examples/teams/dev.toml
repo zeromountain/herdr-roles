@@ -1,0 +1,34 @@
+# 개발팀: 역할 5개 = 메인(lead) 1 + 새로 스폰되는 pane 4.
+# `bin/roles team-up --team dev` 를 실행한 pane 이 lead 역할을 맡고, 나머지만 스폰합니다.
+# 이미 있는 역할 pane 은 건드리지 않으므로 다시 실행해도 안전합니다.
+
+[team]
+name = "dev"
+description = "개발팀"
+workflow = "feature"        # 선택: `roles run` 에서 --workflow 를 생략했을 때 쓰는 기본 워크플로우
+
+[[member]]
+role = "planner"
+lead = true                 # 호출한(메인) pane. 스폰하지 않음
+
+[[member]]
+role = "implementer"
+split = "right"             # 배치 힌트: planner 의 오른쪽
+of = "planner"
+
+[[member]]
+role = "reviewer"
+split = "down"
+of = "implementer"
+
+[[member]]
+role = "tester"
+split = "down"
+of = "planner"
+
+[[member]]
+role = "runner"
+split = "down"
+of = "tester"
+# ratio = 0.5               # (선택) 분할 시 기준 pane 이 유지하는 비율. 생략하면 균등하게 자동 계산
+# count = 2                 # (선택) 같은 역할을 여러 개
