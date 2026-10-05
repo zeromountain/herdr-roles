@@ -64,6 +64,15 @@ width = "60%"
 height = "60%"
 command = ["python3", "bin/roles", "pick"]
 
+# Opened by `team-up` when no role is configured and there is no terminal to ask in.
+[[panes]]
+id = "setup"
+title = "Roles setup"
+placement = "popup"
+width = "60%"
+height = "60%"
+command = ["python3", "bin/roles", "setup"]
+
 [[panes]]
 id = "board"
 title = "Roles board"

@@ -6,9 +6,10 @@ import shutil
 import sys
 import time
 
-from . import config, display, handoff, team as teammod, workflow as wfmod
+from . import config, display, handoff, setup as setupmod, team as teammod, workflow as wfmod
 from .config import ConfigError, PLUGIN_ID
 from .herdr import Herdr, HerdrError
+from .setup import SetupAborted
 from .state import LockTimeout, Store
 
 EXAMPLES = os.path.join(teammod.ROOT, "examples")
@@ -95,11 +96,52 @@ def cmd_unassign(args, h):
     print("removed" if teammod.unassign(h, Store(), ws, pane) else "not assigned")
 
 
+def _has_terminal():
+    return sys.stdin.isatty() and sys.stdout.isatty()
+
+
+def _run_wizard():
+    try:
+        return setupmod.run_wizard()
+    except (SetupAborted, EOFError) as e:
+        raise CliError(str(e) or "입력이 끝나 설정을 중단했습니다.")
+
+
+def _ensure_roles(h, pane):
+    """No roles configured yet: interview the user (or open the setup popup when there is no terminal to ask in).
+
+    Returns the name of the team the wizard just wrote, or None when roles already existed.
+    """
+    if not setupmod.needs_setup():
+        return None
+    if _has_terminal():
+        return _run_wizard()
+    # herdr action / agent shell: stdin is not a terminal, so hand the questions to a popup the user can see
+    try:
+        h.plugin_pane_open(PLUGIN_ID, "setup", target_pane=pane)
+    except HerdrError:
+        raise CliError("설정된 역할이 없습니다. 터미널에서 `roles setup` 을 실행해 역할을 정한 뒤 team-up 을 다시 실행하세요.")
+    raise CliError("설정된 역할이 없어 설정 창을 열었어요. 질문에 답한 뒤 team-up 을 다시 실행하세요.")
+
+
+def cmd_setup(args, h):
+    if not setupmod.needs_setup() and not args.force:
+        raise CliError("이미 역할이 설정돼 있습니다 (다시 정하려면 --force: roles.toml 을 덮어씁니다).")
+    team = _run_wizard()
+    print(f"\n팀 '{team}' 준비 완료. 리드로 쓸 pane 에서 `roles team-up` 을 실행하세요.")
+    if _has_terminal():
+        try:
+            input("Enter 로 닫기")
+        except EOFError:
+            pass
+
+
 def cmd_team_up(args, h):
-    roles, settings = config.load_roles(), config.load_settings()
-    team = config.load_team(_pick_team_name(args, settings), roles)
     pane, _ = _where(h, args)
-    rep = teammod.team_up(h, Store(), roles, team, pane, settings, dry_run=args.dry_run)
+    created = _ensure_roles(h, pane)
+    roles, settings = config.load_roles(), config.load_settings()
+    team = config.load_team(created or _pick_team_name(args, settings), roles)
+    rep =teammod.team_up(h, Store(), roles, team, pane, settings, dry_run=args.dry_run)
     if args.json:
         print(json.dumps(rep, ensure_ascii=False, indent=1))
         return
@@ -289,6 +331,8 @@ def cmd_board(args, h):
 
 def cmd_pick(args, h):
     """Interactive menu shown in the `picker` popup."""
+    if setupmod.needs_setup():
+        _run_wizard()
     roles = config.load_roles()
     pane = _context_pane()
     ns = lambda **kw: argparse.Namespace(pane=pane, json=False, **kw)  # noqa: E731
@@ -346,6 +390,8 @@ def build_parser():
 
     s = add("init", cmd_init, pane=False, help="예제 설정을 설정 디렉터리로 복사")
     s.add_argument("--force", action="store_true")
+    s = add("setup", cmd_setup, pane=False, help="질문에 답하며 역할·팀 설정 만들기 (역할이 없으면 team-up 이 자동 실행)")
+    s.add_argument("--force", action="store_true", help="이미 역할이 있어도 다시 정함 (roles.toml 덮어씀)")
     s = add("assign", cmd_assign, help="pane에 역할 지정")
     s.add_argument("--role", required=True)
     add("unassign", cmd_unassign, help="pane 역할 해제")
