@@ -1,6 +1,8 @@
 import json
 import os
 import shutil
+import subprocess
+import sys
 import unittest
 from unittest import mock
 
@@ -77,6 +79,26 @@ class WizardTests(FakeEnv):
         self.assertEqual(loaded.lead.role, "planner")
         self.assertEqual([m.role for m in loaded.members], ["planner", "builder"])
         self.assertEqual(config.load_settings()["default_team"], "mini")
+
+    def test_garbled_answer_is_asked_again(self):
+        self.empty_config()
+        said = []
+        answers = TWO_ROLES[:5] + ["설계를 �"] + TWO_ROLES[5:]
+        setup.run_wizard(ask=scripted(answers), say=said.append)
+        self.assertEqual(config.load_roles()["planner"].prompt, "설계를 맡습니다")
+        self.assertTrue(any("깨진 글자" in s for s in said))
+
+    def test_half_erased_hangul_bytes_do_not_crash_the_cli(self):
+        # a tty without line editing erases one byte per backspace: "한" (ed 95 9c) minus one byte = ed 95
+        self.empty_config()
+        lines = [a.encode() for a in TWO_ROLES]
+        lines.insert(5, "설계".encode() + b"\xed\x95")
+        bin_roles = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "bin", "roles")
+        out = subprocess.run([sys.executable, bin_roles, "setup"], input=b"\n".join(lines) + b"\n",
+                             capture_output=True, env=os.environ.copy())
+        self.assertEqual(out.returncode, 0, out.stderr.decode(errors="replace"))
+        self.assertIn("깨진 글자", out.stdout.decode())
+        self.assertEqual(config.load_roles()["planner"].prompt, "설계를 맡습니다")
 
     def test_special_characters_survive_round_trip(self):
         self.empty_config()
