@@ -1,9 +1,64 @@
 #!/usr/bin/env python3
 """herdr-roles entry point: `bin/roles <subcommand>`."""
 import os
+import shutil
+import subprocess
 import sys
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), ".."))
+# Keep everything above the package import runnable on old Pythons: the package needs 3.11+ (tomllib).
+MIN_PYTHON = (3, 11)
+SCRIPT = os.path.realpath(__file__)
+
+
+def _python_candidates():
+    """Interpreters to try when we started on an old Python. ROLES_PYTHON_CANDIDATES (os.pathsep list) replaces the search."""
+    override = os.environ.get("ROLES_PYTHON_CANDIDATES")
+    if override is not None:
+        return [c for c in override.split(os.pathsep) if c]
+    found = [os.environ.get("ROLES_PYTHON")]
+    found += [shutil.which(f"python3.{minor}") for minor in range(20, MIN_PYTHON[1] - 1, -1)]
+    found += ["/opt/homebrew/bin/python3", "/usr/local/bin/python3", shutil.which("python3")]
+    return [c for c in found if c]
+
+
+def _is_new_enough(python):
+    probe = f"import sys; sys.exit(sys.version_info < {MIN_PYTHON!r})"
+    try:
+        return subprocess.run([python, "-c", probe], capture_output=True, timeout=10).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def _reexec_on_new_python():
+    """Agent shells (`zsh -lc`, hooks) often skip ~/.zshrc and land on macOS's /usr/bin/python3 (3.9)."""
+    if os.environ.get("ROLES_REEXEC"):     # a candidate lied about its version: stop instead of looping
+        return
+    seen = set()
+    for python in _python_candidates():
+        real = os.path.realpath(python)
+        if real in seen or real == os.path.realpath(sys.executable) or not os.access(real, os.X_OK):
+            continue
+        seen.add(real)
+        if _is_new_enough(python):
+            os.environ["ROLES_REEXEC"] = "1"
+            os.execv(python, [python, SCRIPT, *sys.argv[1:]])
+
+
+if sys.version_info < MIN_PYTHON:
+    _reexec_on_new_python()
+    have = ".".join(map(str, sys.version_info[:3]))
+    need = ".".join(map(str, MIN_PYTHON))
+    sys.stderr.write(
+        f"error: herdr-roles 는 Python {need}+ 가 필요한데 {sys.executable} ({have}) 로 실행됐고, "
+        f"더 새로운 Python 을 찾지 못했습니다.\n"
+        f"  - 설치: brew install python\n"
+        f"  - 설치돼 있는데도 이 오류가 나면, 에이전트·훅이 쓰는 로그인 셸이 Homebrew 경로를 모르는 것입니다:\n"
+        f"      echo 'eval \"$(/opt/homebrew/bin/brew shellenv)\"' >> ~/.zprofile\n"
+        f"  - 또는 쓸 Python 을 직접 지정: export ROLES_PYTHON=/path/to/python3\n")
+    sys.exit(1)
+os.environ.pop("ROLES_REEXEC", None)    # don't leak the guard into panes/agents we spawn: their own `roles` may need it
+
+sys.path.insert(0, os.path.join(os.path.dirname(SCRIPT), ".."))
 
 from roles.cli import main  # noqa: E402
 

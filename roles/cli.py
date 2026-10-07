@@ -6,7 +6,7 @@ import shutil
 import sys
 import time
 
-from . import config, display, handoff, setup as setupmod, team as teammod, workflow as wfmod
+from . import config, display, handoff, install as installmod, setup as setupmod, team as teammod, workflow as wfmod
 from .config import ConfigError, PLUGIN_ID
 from .herdr import Herdr, HerdrError
 from .setup import SetupAborted
@@ -102,12 +102,20 @@ def _has_terminal():
 
 def _run_wizard(preset=None):
     try:
-        return setupmod.run_wizard(preset=preset)
+        team = setupmod.run_wizard(preset=preset)
     except SetupAborted as e:
         raise CliError(str(e))
     except EOFError:    # its own message ("EOF when reading a line") means nothing to the user
         raise CliError("입력이 끝나 설정을 중단했습니다. 질문에 답할 수 있는 터미널에서 실행하거나, "
                        "추천값으로 진행하려면 `yes '' | roles setup --preset <프리셋>` 처럼 실행하세요.")
+    # every wizard path (setup, team-up, picker) ends here: make `roles` reachable from agent shells too
+    print("\n에이전트에서 쓸 수 있게 연결:")
+    print("\n".join(installmod.install()))
+    return team
+
+
+def cmd_install(args, h):
+    print("\n".join(installmod.install(force=args.force)))
 
 
 def _ensure_roles(h, pane):
@@ -404,6 +412,9 @@ def build_parser():
     s.add_argument("--force", action="store_true", help="이미 역할이 있어도 다시 정함 (roles.toml 덮어씀)")
     s.add_argument("--preset", help="기업 팀 구조 프리셋으로 바로 시작 (목록: --list-presets)")
     s.add_argument("--list-presets", action="store_true", help="사용 가능한 팀 구조 프리셋 보기")
+    s = add("install", cmd_install, pane=False,
+            help="`roles` 명령을 ~/.local/bin 에, 에이전트 스킬을 Claude Code·Codex 에 연결 (setup 이 자동 실행)")
+    s.add_argument("--force", action="store_true", help="다른 곳을 가리키는 기존 링크도 이 플러그인으로 바꿈")
     s = add("assign", cmd_assign, help="pane에 역할 지정")
     s.add_argument("--role", required=True)
     add("unassign", cmd_unassign, help="pane 역할 해제")

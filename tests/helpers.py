@@ -27,10 +27,14 @@ class FakeEnv(unittest.TestCase):
         shutil.copytree(EXAMPLES, self.cfg)
         self.fake_path = os.path.join(self.tmp, "fake.json")
         patch = {"ROLES_CONFIG_DIR": self.cfg, "ROLES_STATE_DIR": os.path.join(self.tmp, "state"),
-                 "FAKE_HERDR_STATE": self.fake_path}
+                 "FAKE_HERDR_STATE": self.fake_path,
+                 # the wizard links `roles` and the agent skill under the home dir: keep that out of the real one
+                 "ROLES_HOME": os.path.join(self.tmp, "home"), "CODEX_HOME": os.path.join(self.tmp, "home", ".codex")}
         for k, v in patch.items():
             self._set_env(k, v)
         self._set_env("HERDR_SESSION", None)
+        self._set_env("ROLES_BIN_DIR", None)
+        self._set_env("SHELL", None)    # install's PATH check would otherwise start the user's login shell
         self.cwd = os.path.join(self.tmp, "repo")
         os.makedirs(self.cwd)
         self.write_fake({"panes": {"w1:p1": self._pane("w1:p1", agent="claude", status="idle")},
