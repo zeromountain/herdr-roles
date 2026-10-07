@@ -100,9 +100,9 @@ def _has_terminal():
     return sys.stdin.isatty() and sys.stdout.isatty()
 
 
-def _run_wizard():
+def _run_wizard(preset=None):
     try:
-        return setupmod.run_wizard()
+        return setupmod.run_wizard(preset=preset)
     except (SetupAborted, EOFError) as e:
         raise CliError(str(e) or "입력이 끝나 설정을 중단했습니다.")
 
@@ -125,9 +125,16 @@ def _ensure_roles(h, pane):
 
 
 def cmd_setup(args, h):
+    if args.list_presets:
+        for pid, p in setupmod.PRESETS.items():
+            roles = ", ".join(f"{r['name']}({r['agent']})" for r in p["roles"])
+            print(f"{pid:<18} {p['label']} — 리드 {p['lead']}, 역할 {roles}\n{'':<18} {p['description']}")
+        return
+    if args.preset and args.preset not in setupmod.PRESETS:
+        raise CliError(f"알 수 없는 프리셋 '{args.preset}' (사용 가능: {', '.join(setupmod.PRESETS)})")
     if not setupmod.needs_setup() and not args.force:
         raise CliError("이미 역할이 설정돼 있습니다 (다시 정하려면 --force: roles.toml 을 덮어씁니다).")
-    team = _run_wizard()
+    team = _run_wizard(args.preset)
     print(f"\n팀 '{team}' 준비 완료. 리드로 쓸 pane 에서 `roles team-up` 을 실행하세요.")
     if _has_terminal():
         try:
@@ -392,6 +399,8 @@ def build_parser():
     s.add_argument("--force", action="store_true")
     s = add("setup", cmd_setup, pane=False, help="질문에 답하며 역할·팀 설정 만들기 (역할이 없으면 team-up 이 자동 실행)")
     s.add_argument("--force", action="store_true", help="이미 역할이 있어도 다시 정함 (roles.toml 덮어씀)")
+    s.add_argument("--preset", help="기업 팀 구조 프리셋으로 바로 시작 (목록: --list-presets)")
+    s.add_argument("--list-presets", action="store_true", help="사용 가능한 팀 구조 프리셋 보기")
     s = add("assign", cmd_assign, help="pane에 역할 지정")
     s.add_argument("--role", required=True)
     add("unassign", cmd_unassign, help="pane 역할 해제")

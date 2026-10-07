@@ -1,3 +1,4 @@
+import json
 import os
 import shutil
 import unittest
@@ -5,7 +6,7 @@ from unittest import mock
 
 from helpers import FakeEnv
 import test_cli
-from roles import cli, config, setup
+from roles import cli, config, presets, setup
 
 EXAMPLES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "examples")
 
@@ -15,10 +16,34 @@ def scripted(answers):
     return lambda _prompt="": next(it)
 
 
-# planner(claude, with prompt) -> add more -> builder(shell command) -> no more -> lead planner -> team "mini" -> save
-TWO_ROLES = ["planner", "", "1", "1", "설계를 맡습니다", "y",
+MANUAL = ""     # first question: Enter = "직접 정하기" (the last option)
+
+# manual -> planner(claude, with prompt) -> add more -> builder(shell command) -> no more -> lead planner -> team "mini" -> save
+TWO_ROLES = [MANUAL, "planner", "", "1", "1", "설계를 맡습니다", "y",
              "builder", "Builder", "2", "pnpm dev", "n",
              "1", "mini", "y"]
+
+PRESET_NUMBER = {pid: str(i) for i, pid in enumerate(presets.PRESETS, 1)}
+# agent question options: 1 recommended (default), 2 pick per role, 3 all claude, 4 all codex
+AGENTS_RECOMMENDED, AGENTS_EACH, ALL_CLAUDE, ALL_CODEX = "", "2", "3", "4"
+# toss-silo -> recommended agents -> recommended models -> no extra role -> lead default -> team default -> save
+# model question options: 1 recommended (default), 2 CLI default, 3 one per agent, 4 pick per role
+MODELS_RECOMMENDED, MODELS_DEFAULT, MODELS_PER_AGENT, MODELS_EACH = "", "2", "3", "4"
+TOSS_DEFAULTS = [PRESET_NUMBER["toss-silo"], AGENTS_RECOMMENDED, MODELS_RECOMMENDED, "", "", "", "y"]
+
+
+def fake_codex_home(test, listed=("gpt-a", "gpt-b")):
+    """Point CODEX_HOME at a temp dir whose model catalog lists `listed` in that order (and hides gpt-hidden)."""
+    home = os.path.join(test.tmp, "codex")
+    os.makedirs(home, exist_ok=True)
+    models = [{"slug": "gpt-hidden", "visibility": "hide", "priority": 0}]
+    models += [{"slug": slug, "visibility": "list", "priority": i} for i, slug in reversed(list(enumerate(listed, 1)))]
+    with open(os.path.join(home, "models_cache.json"), "w") as f:
+        json.dump({"models": models}, f)
+    test._set_env("CODEX_HOME", home)
+
+
+RECOMMENDED_CODEX = sorted({tier["codex"] for tier in (presets.LEAD, presets.RIGOR, presets.CORE, presets.LIGHT)})
 
 
 class WizardTests(FakeEnv):
@@ -56,14 +81,14 @@ class WizardTests(FakeEnv):
     def test_special_characters_survive_round_trip(self):
         self.empty_config()
         prompt = 'say "hi" \\ done'
-        setup.run_wizard(ask=scripted(["r", "", "1", "1", prompt, "n", "t", "y"]), say=lambda *_: None)
+        setup.run_wizard(ask=scripted([MANUAL, "r", "", "1", "1", prompt, "n", "t", "y"]), say=lambda *_: None)
         self.assertEqual(config.load_roles()["r"].prompt, prompt)
 
     def test_invalid_and_duplicate_answers_are_asked_again(self):
         self.empty_config()
         said = []
         # "Bad Name" rejected; second "dup" rejected as duplicate; lead choice "9" rejected
-        answers = ["Bad Name", "dup", "", "3", "y", "dup", "other", "", "3", "n", "9", "1", "", "y"]
+        answers = [MANUAL, "Bad Name", "dup", "", "3", "y", "dup", "other", "", "3", "n", "9", "1", "", "y"]
         setup.run_wizard(ask=scripted(answers), say=said.append)
         self.assertEqual(sorted(config.load_roles()), ["dup", "other"])
         self.assertTrue(any("소문자" in s for s in said))
@@ -88,6 +113,161 @@ class WizardTests(FakeEnv):
         s = config.load_settings()
         self.assertEqual(s["default_team"], "mini")
         self.assertEqual(s["max_spawn"], 8)
+
+
+class PresetTests(FakeEnv):
+    def setUp(self):
+        super().setUp()
+        shutil.rmtree(self.cfg)
+        os.makedirs(self.cfg)
+        fake_codex_home(self)
+
+    def agent_args(self):
+        return {n: r.agent_args for n, r in config.load_roles().items()}
+
+    def test_codex_models_come_from_its_cache_listed_only_in_priority_order(self):
+        self.assertEqual(presets.model_choices("codex"), ["gpt-a", "gpt-b"])
+        self.assertEqual(presets.model_choices("claude"), list(presets.CLAUDE_MODELS))
+        os.remove(os.path.join(os.environ["CODEX_HOME"], "models_cache.json"))
+        self.assertEqual(presets.model_choices("codex"), [])
+
+    def test_every_preset_role_has_a_researched_model_for_each_agent(self):
+        for pid, p in presets.PRESETS.items():
+            for r in p["roles"]:
+                self.assertEqual(set(r["models"]), set(presets.AGENTS), f"{pid}/{r['name']}")
+                self.assertIn(r["models"]["claude"], presets.CLAUDE_MODELS, f"{pid}/{r['name']}")
+
+    def test_recommended_models_are_the_default_for_every_preset(self):
+        fake_codex_home(self, RECOMMENDED_CODEX)
+        for pid in presets.PRESETS:
+            with self.subTest(pid):
+                setup.run_wizard(ask=scripted([PRESET_NUMBER[pid], "", MODELS_RECOMMENDED, "", "", "", "y"]),
+                                 say=lambda *_: None)
+                expected = {r["name"]: ("--model", r["models"][r["agent"]]) for r in presets.PRESETS[pid]["roles"]}
+                self.assertEqual(self.agent_args(), expected)
+
+    def test_recommendation_follows_the_agent_when_it_is_changed(self):
+        fake_codex_home(self, RECOMMENDED_CODEX)
+        # toss-silo all codex: po is LEAD -> gpt-6-astra, frontend is CORE -> gpt-6.1-sol
+        setup.run_wizard(ask=scripted([PRESET_NUMBER["toss-silo"], ALL_CODEX, MODELS_RECOMMENDED, "", "", "", "y"]),
+                         say=lambda *_: None)
+        args = self.agent_args()
+        self.assertEqual(args["po"], ("--model", presets.LEAD["codex"]))
+        self.assertEqual(args["frontend"], ("--model", presets.CORE["codex"]))
+
+    def test_codex_recommendation_missing_from_the_catalog_falls_back_to_cli_default(self):
+        said = []
+        setup.run_wizard(ask=scripted(TOSS_DEFAULTS), say=said.append)     # fake catalog only has gpt-a, gpt-b
+        args = self.agent_args()
+        self.assertEqual(args["po"], ("--model", presets.LEAD["claude"]))
+        self.assertEqual(args["frontend"], ())
+        self.assertTrue(any("codex 기본 모델" in s for s in said))
+
+    def test_per_role_pick_offers_the_recommendation_as_enter(self):
+        fake_codex_home(self, RECOMMENDED_CODEX)
+        # toss-silo: po Enter (fable), designer -> sonnet (4), frontend Enter (gpt-6.1-sol), server Enter, analyst Enter
+        answers = [PRESET_NUMBER["toss-silo"], AGENTS_RECOMMENDED, MODELS_EACH, "", "4", "", "", "", "", "", "", "y"]
+        setup.run_wizard(ask=scripted(answers), say=lambda *_: None)
+        args = self.agent_args()
+        self.assertEqual(args["po"], ("--model", "fable"))
+        self.assertEqual(args["designer"], ("--model", "sonnet"))
+        self.assertEqual(args["frontend"], ("--model", presets.CORE["codex"]))
+        self.assertEqual(args["server"], ("--model", presets.RIGOR["codex"]))
+
+    def test_default_models_add_no_agent_args(self):
+        answers = [PRESET_NUMBER["toss-silo"], AGENTS_RECOMMENDED, MODELS_DEFAULT, "", "", "", "y"]
+        setup.run_wizard(ask=scripted(answers), say=lambda *_: None)
+        self.assertEqual(set(self.agent_args().values()), {()})
+
+    def test_one_model_per_agent(self):
+        # claude: 1 default, 2 fable, 3 opus, 4 sonnet, 5 custom / codex: 1 default, 2 gpt-a, 3 gpt-b, 4 custom
+        answers = [PRESET_NUMBER["toss-silo"], AGENTS_RECOMMENDED, MODELS_PER_AGENT, "3", "3", "", "", "", "y"]
+        setup.run_wizard(ask=scripted(answers), say=lambda *_: None)
+        args = self.agent_args()
+        self.assertEqual(args["po"], ("--model", "opus"))
+        self.assertEqual(args["analyst"], ("--model", "opus"))
+        self.assertEqual(args["frontend"], ("--model", "gpt-b"))
+        self.assertEqual(args["server"], ("--model", "gpt-b"))
+
+    def test_models_per_role_including_typed_and_blank_custom(self):
+        # baemin-tf roles: tf-lead(claude), builder(codex), qa(claude), ops(claude)
+        # tf-lead -> fable (2), builder -> custom "my-model" (4; its recommendation isn't in the fake catalog),
+        # qa -> Enter (= recommended opus), ops -> custom left blank (= CLI default)
+        answers = [PRESET_NUMBER["baemin-tf"], AGENTS_RECOMMENDED, MODELS_EACH, "2", "4", "my-model", "", "5", "",
+                   "", "", "", "y"]
+        setup.run_wizard(ask=scripted(answers), say=lambda *_: None)
+        self.assertEqual(self.agent_args(), {"tf-lead": ("--model", "fable"), "builder": ("--model", "my-model"),
+                                             "qa": ("--model", "opus"), "ops": ()})
+
+    def test_every_preset_is_well_formed(self):
+        for pid, p in presets.PRESETS.items():
+            names = [r["name"] for r in p["roles"]]
+            self.assertTrue(setup.NAME_RE.match(pid), pid)
+            self.assertTrue(all(setup.NAME_RE.match(n) for n in names), pid)
+            self.assertEqual(len(set(names)), len(names), pid)
+            self.assertIn(p["lead"], names, pid)
+            self.assertTrue(p["label"] and p["description"], pid)
+            self.assertTrue(all(r["agent"] in presets.AGENTS for r in p["roles"]), pid)
+
+    def test_every_preset_writes_a_loadable_team(self):
+        for pid in presets.PRESETS:
+            with self.subTest(pid):
+                setup.run_wizard(ask=scripted([PRESET_NUMBER[pid], "", MODELS_DEFAULT, "", "", "", "y"]), say=lambda *_: None)
+                roles = config.load_roles()
+                team = config.load_team(pid, roles)
+                self.assertEqual(team.lead.role, presets.PRESETS[pid]["lead"])
+                self.assertEqual(team.description, presets.PRESETS[pid]["description"])
+                self.assertEqual(sorted(roles), sorted(r["name"] for r in presets.PRESETS[pid]["roles"]))
+                recommended = {r["name"]: r["agent"] for r in presets.PRESETS[pid]["roles"]}
+                self.assertEqual({n: r.agent for n, r in roles.items()}, recommended)
+                self.assertTrue(all(r.prompt for r in roles.values()))
+
+    def test_toss_silo_defaults(self):
+        team = setup.run_wizard(ask=scripted(TOSS_DEFAULTS), say=lambda *_: None)
+        self.assertEqual(team, "toss-silo")
+        self.assertEqual(config.load_settings()["default_team"], "toss-silo")
+        roles = config.load_roles()
+        members = [m.role for m in config.load_team("toss-silo", roles).members]
+        self.assertEqual(members, ["po", "designer", "frontend", "server", "analyst"])
+        self.assertEqual({n: r.agent for n, r in roles.items()},
+                         {"po": "claude", "designer": "claude", "frontend": "codex", "server": "codex",
+                          "analyst": "claude"})
+
+    def test_agents_can_be_picked_per_role_with_recommendation_as_default(self):
+        # toss-silo roles in order: po, designer, frontend, server, analyst
+        # po -> codex(2), designer -> Enter (claude), frontend -> claude(1), server -> Enter (codex), analyst -> codex(2)
+        answers = [PRESET_NUMBER["toss-silo"], AGENTS_EACH, "2", "", "1", "", "2", MODELS_DEFAULT, "", "", "", "y"]
+        setup.run_wizard(ask=scripted(answers), say=lambda *_: None)
+        self.assertEqual({n: r.agent for n, r in config.load_roles().items()},
+                         {"po": "codex", "designer": "claude", "frontend": "claude", "server": "codex",
+                          "analyst": "codex"})
+
+    def test_one_agent_for_every_role(self):
+        setup.run_wizard(ask=scripted([PRESET_NUMBER["daangn-squad"], ALL_CLAUDE, MODELS_DEFAULT, "", "", "", "y"]),
+                         say=lambda *_: None)
+        self.assertEqual({r.agent for r in config.load_roles().values()}, {"claude"})
+
+    def test_preset_agent_extra_role_lead_and_team_name_can_be_changed(self):
+        # baemin-tf -> all codex -> add runner(shell command) -> no more -> lead = builder (#2) -> team "launch" -> save
+        answers = [PRESET_NUMBER["baemin-tf"], ALL_CODEX, MODELS_DEFAULT, "y", "runner", "", "2", "pnpm dev", "n", "2", "launch", "y"]
+        setup.run_wizard(ask=scripted(answers), say=lambda *_: None)
+        roles = config.load_roles()
+        self.assertEqual(roles["qa"].agent, "codex")
+        self.assertEqual(roles["runner"].command, "pnpm dev")
+        team = config.load_team("launch", roles)
+        self.assertEqual(team.lead.role, "builder")
+        self.assertEqual([m.role for m in team.members], ["builder", "tf-lead", "qa", "ops", "runner"])
+
+    def test_preset_argument_skips_the_first_question(self):
+        setup.run_wizard(ask=scripted(["", MODELS_DEFAULT, "", "", "", "y"]), say=lambda *_: None, preset="daangn-squad")
+        self.assertEqual(config.load_team("daangn-squad", config.load_roles()).lead.role, "pm")
+
+    def test_extra_role_cannot_reuse_a_preset_name(self):
+        said = []
+        answers = [PRESET_NUMBER["toss-silo"], "", MODELS_DEFAULT, "y", "po", "growth", "", "3", "n", "", "", "y"]
+        setup.run_wizard(ask=scripted(answers), say=said.append)
+        self.assertIn("growth", config.load_roles())
+        self.assertTrue(any("이미 추가" in s for s in said))
 
 
 class FirstRunCliTests(FakeEnv):
@@ -135,6 +315,43 @@ class FirstRunCliTests(FakeEnv):
         code, _, err = self.run_cli("setup")
         self.assertEqual(code, 1)
         self.assertIn("--force", err)
+
+    def test_list_presets_prints_every_id_without_asking(self):
+        self.with_examples()
+        with mock.patch("builtins.input", side_effect=AssertionError("must not ask")):
+            code, out, _ = self.run_cli("setup", "--list-presets")
+        self.assertEqual(code, 0)
+        for pid in presets.PRESETS:
+            self.assertIn(pid, out)
+
+    def test_unknown_preset_is_rejected_before_asking(self):
+        with mock.patch("builtins.input", side_effect=AssertionError("must not ask")):
+            code, _, err = self.run_cli("setup", "--preset", "nope")
+        self.assertEqual(code, 1)
+        self.assertIn("toss-silo", err)
+        self.assertEqual(os.listdir(self.cfg), [])
+
+    def test_setup_with_preset_then_team_up_spawns_the_preset(self):
+        with mock.patch("builtins.input", side_effect=scripted(["", MODELS_DEFAULT, "", "", "", "y", ""])):
+            code, out, _ = self.run_cli("setup", "--preset", "baemin-tf")
+        self.assertEqual(code, 0, out)
+        code, out, _ = self.run_cli("team-up", "--pane", "w1:p1")
+        self.assertEqual(code, 0)
+        self.assertIn("team 'baemin-tf'", out)
+        self.assertEqual(len(self.fake()["panes"]), 4)       # tf-lead + builder, qa, ops
+
+    def test_chosen_models_reach_herdr_agent_start(self):
+        fake_codex_home(self)
+        # baemin-tf, recommended agents, one model per agent: claude -> opus (3), codex -> gpt-a (2)
+        answers = ["", MODELS_PER_AGENT, "3", "2", "", "", "", "y", ""]
+        with mock.patch("builtins.input", side_effect=scripted(answers)):
+            code, out, _ = self.run_cli("setup", "--preset", "baemin-tf")
+        self.assertEqual(code, 0, out)
+        code, _, _ = self.run_cli("team-up", "--pane", "w1:p1")
+        self.assertEqual(code, 0)
+        starts = {c[c.index("--kind") + 1] + ":" + c[2]: c[c.index("--") + 1:]
+                  for c in self.fake()["calls"] if c[:2] == ["agent", "start"]}
+        self.assertEqual(sorted(starts.values()), [["--model", "gpt-a"], ["--model", "opus"], ["--model", "opus"]])
 
 
 if __name__ == "__main__":
