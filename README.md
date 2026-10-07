@@ -11,46 +11,131 @@ herdr pane에 **역할**을 부여하고, 메인 세션에서 **팀을 구성**(
 
 개발팀 5역할을 지정하면 **메인 pane이 lead 1개를 맡고 나머지 4개만 새로 스폰**합니다.
 
-## 설치
+## 시작하기
+
+처음 한 번은 아래 4단계를 따라 하면 됩니다.
+
+**준비물**: herdr 0.9.1+, Python 3.11+ (표준 라이브러리만 사용), 팀에 쓸 에이전트 CLI(`claude`, `codex`)가 설치·로그인된 상태.
+
+### 1단계. 플러그인 설치
 
 ```sh
-herdr plugin install zeromountain/herdr-roles   # 또는 로컬 클론을 링크: herdr plugin link <클론 경로>
+herdr plugin install zeromountain/herdr-roles
+herdr plugin list          # "herdr-roles ... enabled" 가 보이면 성공
 ```
 
-이 문서의 `bin/roles`는 플러그인 코드 안의 실행 파일입니다. 어디에 있는지는 설치 방법에 따라 다릅니다.
+> 플러그인은 herdr 전체(모든 세션)에 적용되지만, 팀을 만들지 않은 workspace에서는 아무 일도 하지 않습니다.
 
-| 설치 방법 | `bin/roles` 위치 |
-|---|---|
-| `herdr plugin install` (GitHub) | `~/.config/herdr/plugins/github/herdr-roles-<해시>/bin/roles` |
-| `herdr plugin link <클론 경로>` | `<클론 경로>/bin/roles` |
+### 2단계. `roles` 명령 등록하기
 
-셸에서 자주 쓴다면 PATH에 링크해 두면 편합니다 (`bin/roles`는 링크로 실행해도 자기 코드를 찾습니다).
+플러그인 명령은 설치된 폴더 안의 `bin/roles`에 있습니다. 매번 긴 경로를 치지 않도록 `roles`라는 이름으로 등록해 둡니다.
 
 ```sh
-ln -s ~/.config/herdr/plugins/github/herdr-roles-*/bin/roles ~/.local/bin/roles
-roles init           # (선택) 예제 설정을 설정 디렉터리(`herdr plugin config-dir herdr-roles`)로 복사
+mkdir -p ~/.local/bin
+ln -sf ~/.config/herdr/plugins/github/herdr-roles-*/bin/roles ~/.local/bin/roles
+roles --help               # 명령 목록이 나오면 성공
 ```
 
-`init`을 건너뛰어도 됩니다. 역할이 하나도 없으면 첫 `team-up`이 아래의 설정 마법사를 먼저 실행합니다.
-
-Python 3.11+ (표준 라이브러리만 사용), herdr 0.9.1+.
-
-> 플러그인 레지스트리는 herdr 전체(모든 세션)에 적용됩니다. 훅은 상태 파일이 없는 workspace에서는 즉시 종료하므로
-> 기존 세션에는 영향이 없습니다.
-
-## 설정 마법사 (`roles setup`)
-
-질문에 하나씩 답하면 역할과 팀 설정 파일을 만들어 줍니다. TOML을 직접 쓰지 않아도 됩니다.
+`roles: command not found`가 나오면 `~/.local/bin`이 PATH에 없는 것입니다. 한 번만 추가하세요.
 
 ```sh
-bin/roles setup            # 역할이 없을 때만 실행됨
-bin/roles setup --force    # 이미 있어도 다시 정함 (roles.toml 덮어씀)
-bin/roles setup --list-presets          # 기업 팀 구조 프리셋 목록
-bin/roles setup --preset toss-silo      # 프리셋으로 바로 시작 (첫 질문 생략)
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc && exec zsh
 ```
 
-마법사는 터미널에서 답을 기다립니다. Claude Code 같은 에이전트에게 실행을 맡기면 답할 입력이 없어 첫 질문에서
-멈추므로, 모든 질문을 추천값(Enter)으로 넘기게 하세요: `yes '' | bin/roles setup --preset toss-silo`.
+<details>
+<summary>GitHub 대신 로컬 클론을 링크해서 쓰는 경우</summary>
+
+```sh
+herdr plugin link <클론 경로>
+ln -sf <클론 경로>/bin/roles ~/.local/bin/roles
+```
+</details>
+
+### 3단계. 팀 정하기 (설정 마법사)
+
+```sh
+roles setup
+```
+
+질문에 번호로 답하면 됩니다. **모르겠으면 Enter**를 누르세요. 모든 질문의 기본값이 추천값입니다.
+아래는 첫 질문에서 `1`(토스 사일로)을 고르고 나머지는 Enter만 누른 예입니다.
+
+```
+어떤 구조로 팀을 만들까요?
+  1. 토스 사일로 — PO가 이끄는 작은 목적 조직. ...
+  2. 당근 스쿼드 — 하나의 문제 영역을 끝까지 맡는 교차 기능 팀. ...
+  3. 배민 TF — 특정 미션을 위해 모였다가 끝나면 흩어지는 태스크포스. ...
+  4. Spotify 스쿼드 — ...
+  5. Amazon 투 피자 팀 — ...
+  6. 직접 정하기 (역할을 하나씩 입력)
+번호 [6]: 1                                   ← 회사 팀 구조(프리셋)를 고르면 역할이 미리 채워집니다
+역할별 에이전트를 어떻게 정할까요?  번호 [1]:    ← Enter: 기획·리뷰는 claude, 구현은 codex
+모델은 어떻게 정할까요?  번호 [1]:              ← Enter: 역할에 맞는 추천 모델
+역할을 더 추가할까요? (y/N):                   ← Enter: 추가 안 함
+지금 pane(team-up 을 실행한 곳)이 맡을 리드 역할은?  번호 [1]:   ← Enter: po
+팀 이름 [toss-silo]:
+── 요약 ──
+  - po (PO): claude (fable)  ← 리드
+  - designer (Product Designer): claude (opus)
+  - frontend (Frontend): codex (gpt-6.1-sol)
+  - server (Server): codex (gpt-6-astra)
+  - analyst (Data Analyst): claude (opus)
+이대로 저장할까요? (Y/n):
+팀 'toss-silo' 준비 완료. 리드로 쓸 pane 에서 `roles team-up` 을 실행하세요.
+```
+
+- 다시 정하고 싶으면 `roles setup --force` (기존 역할 설정을 덮어씁니다).
+- 각 질문의 선택지와 프리셋·추천 모델의 근거는 [설정 마법사 자세히](#설정-마법사-자세히)에 있습니다.
+
+<details>
+<summary>터미널 대신 다른 방법으로 정하기</summary>
+
+- **herdr 팝업으로**: 2단계를 건너뛰어도 됩니다. herdr 안에서 아래를 실행하면 마법사가 팝업으로 뜹니다.
+  ```sh
+  herdr plugin pane open --plugin herdr-roles --entrypoint setup
+  ```
+  역할이 하나도 없을 때 팀 구성(`team-up`)을 실행해도 같은 팝업이 먼저 뜹니다.
+- **Claude Code 같은 에이전트에게 맡길 때**: 에이전트는 질문에 답할 수 없어 마법사가 첫 질문에서 끝납니다.
+  프리셋을 정해 모든 질문을 추천값으로 넘기게 하세요. 프리셋 목록은 `roles setup --list-presets`로 볼 수 있습니다.
+  ```sh
+  yes '' | roles setup --preset toss-silo
+  ```
+- **예제를 복사해서 직접 고치기**: `roles init`이 개발팀 5역할 예제를 설정 폴더에 복사합니다.
+  설정 폴더 위치는 `herdr plugin config-dir herdr-roles`로 확인하고, 파일 형식은 [설정](#설정-configherdrpluginsconfigherdr-roles)을 보세요.
+</details>
+
+### 4단계. 팀 띄우고 일 시키기
+
+**리드로 쓸 pane**에서 `team-up`을 실행합니다. 그 pane이 리드가 되고, 나머지 역할은 새 pane으로 스폰되어 에이전트가 뜹니다.
+
+- 리드 pane에서 claude 같은 에이전트가 이미 돌고 있다면, 그 에이전트에게 이렇게 말하면 됩니다.
+  > `roles team-up` 실행해줘
+- 셸 pane이라면 직접 실행합니다.
+  ```sh
+  roles team-up --dry-run    # 무엇을 띄울지 미리 보기 (아무것도 만들지 않음)
+  roles team-up              # 팀 구성
+  ```
+
+팀이 뜨면 리드 에이전트는 팀원 목록과 사용법을 프롬프트로 받습니다. 그래서 리드에게 평소처럼 일을 맡기면
+리드가 알아서 팀원에게 나눠 줍니다. 직접 시키고 싶다면:
+
+```sh
+roles send --role server --text "로그인 API 만들어줘"   # 역할 이름으로 지시
+roles read --role server                               # 그 역할의 최근 출력 읽기
+roles status                                           # 팀 상태
+roles team-down                                        # 다 쓰면 정리 (스폰한 pane만 닫음)
+```
+
+정해 둔 순서대로 역할을 거치게 하려면 [워크플로우](#워크플로우)를 쓰세요 (`roles run --workflow <이름> --input "요청"`).
+
+## 설정 마법사 자세히
+
+```sh
+roles setup                          # 역할이 없을 때만 실행됨
+roles setup --force                  # 이미 있어도 다시 정함 (roles.toml 덮어씀)
+roles setup --list-presets           # 기업 팀 구조 프리셋 목록
+roles setup --preset toss-silo       # 프리셋으로 바로 시작 (첫 질문 생략)
+```
 
 ### 기업 팀 구조 프리셋
 
@@ -126,40 +211,50 @@ bin/roles setup --preset toss-silo      # 프리셋으로 바로 시작 (첫 질
 
 마법사가 만든 파일은 그대로 고쳐도 됩니다. 배치(`split`/`of`/`ratio`), 워크플로우 등 세부 항목은 아래 [설정](#설정-configherdrpluginsconfigherdr-roles)을 보세요.
 
-## 빠른 시작
-
-메인 pane(에이전트를 띄운 pane)의 **셸/에이전트에서**:
+## 명령 모음
 
 ```sh
-bin/roles team-up --dry-run          # 무엇을 스폰할지 미리 보기
-bin/roles team-up --team dev         # 이 pane = lead, 나머지 역할 pane 스폰 + 에이전트 기동 + 로스터 주입
-bin/roles status                     # 팀/워크플로우 상태
-bin/roles send --role reviewer --text "auth.py 리뷰해줘"
-bin/roles read --role reviewer --lines 200
-bin/roles run --workflow feature --input "로그인 기능 추가"
-bin/roles advance                    # 반자동 단계에서 다음 역할로 인계
-bin/roles team-down                  # 스폰한 pane만 정리 (lead·직접 만든 pane은 유지)
+roles team-up --dry-run          # 무엇을 스폰할지 미리 보기
+roles team-up --team dev         # 이 pane = lead, 나머지 역할 pane 스폰 + 에이전트 기동 + 로스터 주입
+roles status                     # 팀/워크플로우 상태
+roles send --role reviewer --text "auth.py 리뷰해줘"
+roles read --role reviewer --lines 200
+roles run --workflow feature --input "로그인 기능 추가"
+roles advance                    # 반자동 단계에서 다음 역할로 인계
+roles team-down                  # 스폰한 pane만 정리 (lead·직접 만든 pane은 유지)
 ```
+
+`--team`을 생략하면 `config.toml`의 `default_team`(마법사가 마지막으로 만든 팀)을 씁니다.
 
 `team-up`은 **멱등**입니다. 부족한 pane만 만들고, 죽은 pane은 다시 만들며, 에이전트가 사라진 멤버는 다시 시작합니다.
 이미 정상인 pane은 건드리지 않습니다.
 
 lead가 에이전트(Claude 등)면 로스터(팀원 목록과 `send`/`read` 사용법)를 프롬프트로 받습니다.
-그래서 lead에게 "개발팀 구성해줘"라고 시키면 lead가 직접 `bin/roles team-up`을 실행할 수 있습니다.
+그래서 lead에게 "개발팀 구성해줘"라고 시키면 lead가 직접 `roles team-up`을 실행할 수 있습니다.
 lead가 `working`이면 로스터 주입을 보류했다가 idle이 될 때 전달합니다.
 
 메뉴에서도 쓸 수 있습니다: 액션 `herdr-roles.assign`(메뉴 팝업), `herdr-roles.team-up`, `herdr-roles.team-down`,
 `herdr-roles.status`, `herdr-roles.advance`, `herdr-roles.reapply`. 플러그인 pane: `picker`(메뉴), `board`(상태 대시보드).
 
 > 액션은 **호출한 pane이 아니라 포커스된 pane**을 대상으로 합니다(herdr 액션 컨텍스트의 동작).
-> 에이전트 셸에서 쓸 때는 `bin/roles`가 `$HERDR_PANE_ID`(진짜 호출 pane)를 쓰므로 이쪽이 정확합니다.
+> 에이전트 셸에서 쓸 때는 `roles`가 `$HERDR_PANE_ID`(진짜 호출 pane)를 쓰므로 이쪽이 정확합니다.
+
+## 문제 해결
+
+| 증상 | 해결 |
+|---|---|
+| `roles: command not found` | [2단계](#2단계-roles-명령-등록하기)의 링크와 PATH 설정을 확인하세요. 플러그인을 다시 설치한 뒤 생기면 링크를 다시 거세요 (`ln -sf ...` 한 줄). |
+| `No module named 'tomllib'` | Python 3.11 미만으로 실행됐습니다. `python3 --version`을 확인하고 3.11+를 설치하세요 (macOS 기본 `/usr/bin/python3`는 3.9). |
+| `error: 입력이 끝나 설정을 중단했습니다` | 질문에 답할 수 없는 곳(에이전트, 파이프)에서 `roles setup`을 실행했습니다. 터미널에서 실행하거나 `yes '' \| roles setup --preset <프리셋>`을 쓰세요. |
+| `이미 역할이 설정돼 있습니다` | 이미 팀을 정했습니다. 다시 정하려면 `roles setup --force`. |
+| 팀원 pane에 에이전트가 안 뜨고 `failed` | Claude의 폴더 신뢰(trust) 질문 때문일 수 있습니다. 아래 [알아 둘 점](#알아-둘-점)을 보세요. |
 
 ## 설정 (`~/.config/herdr/plugins/config/herdr-roles/`)
 
 정확한 위치는 `herdr plugin config-dir herdr-roles`가 알려 줍니다. 설정 디렉터리는 아래 순서로 정합니다.
 1. `ROLES_CONFIG_DIR` (직접 지정)
 2. `HERDR_PLUGIN_CONFIG_DIR`: herdr가 메뉴 액션·훅·플러그인 pane을 실행할 때 넘겨 줍니다
-3. `herdr plugin config-dir herdr-roles`: 셸에서 `bin/roles`를 직접 실행할 때 herdr에 물어봅니다
+3. `herdr plugin config-dir herdr-roles`: 셸에서 `roles`를 직접 실행할 때 herdr에 물어봅니다
 4. `~/.config/herdr/plugins/config/herdr-roles` (herdr가 없거나 답하지 못할 때)
 
 그래서 기기마다 herdr의 설정 위치가 달라도, 메뉴 액션과 셸 명령이 같은 디렉터리를 봅니다.
