@@ -103,8 +103,11 @@ def _has_terminal():
 def _run_wizard(preset=None):
     try:
         return setupmod.run_wizard(preset=preset)
-    except (SetupAborted, EOFError) as e:
-        raise CliError(str(e) or "입력이 끝나 설정을 중단했습니다.")
+    except SetupAborted as e:
+        raise CliError(str(e))
+    except EOFError:    # its own message ("EOF when reading a line") means nothing to the user
+        raise CliError("입력이 끝나 설정을 중단했습니다. 질문에 답할 수 있는 터미널에서 실행하거나, "
+                       "추천값으로 진행하려면 `yes '' | roles setup --preset <프리셋>` 처럼 실행하세요.")
 
 
 def _ensure_roles(h, pane):

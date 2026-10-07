@@ -100,6 +100,16 @@ class WizardTests(FakeEnv):
         self.assertIn("깨진 글자", out.stdout.decode())
         self.assertEqual(config.load_roles()["planner"].prompt, "설계를 맡습니다")
 
+    def test_no_input_ends_with_a_readable_message(self):
+        # e.g. an agent running `roles setup` with nothing on stdin
+        self.empty_config()
+        bin_roles = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "bin", "roles")
+        out = subprocess.run([sys.executable, bin_roles, "setup"], input=b"", capture_output=True, env=os.environ.copy())
+        self.assertNotEqual(out.returncode, 0)
+        self.assertIn("입력이 끝나 설정을 중단했습니다", out.stderr.decode())
+        self.assertNotIn("EOF when reading", out.stderr.decode())
+        self.assertTrue(setup.needs_setup())
+
     def test_special_characters_survive_round_trip(self):
         self.empty_config()
         prompt = 'say "hi" \\ done'
