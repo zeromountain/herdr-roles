@@ -15,13 +15,100 @@ herdr pane에 **역할**을 부여하고, 메인 세션에서 **팀을 구성**(
 
 ```sh
 herdr plugin install zeromountain/herdr-roles   # 또는 로컬 클론을 링크: herdr plugin link ~/dev/herdr-roles
-~/dev/herdr-roles/bin/roles init           # 예제 설정을 ~/.config/herdr/plugins/config/herdr-roles/ 로 복사
+~/dev/herdr-roles/bin/roles init           # (선택) 예제 설정을 ~/.config/herdr/plugins/config/herdr-roles/ 로 복사
 ```
+
+`init`을 건너뛰어도 됩니다. 역할이 하나도 없으면 첫 `team-up`이 아래의 설정 마법사를 먼저 실행합니다.
 
 Python 3.11+ (표준 라이브러리만 사용), herdr 0.9.1+.
 
 > 플러그인 레지스트리는 herdr 전체(모든 세션)에 적용됩니다. 훅은 상태 파일이 없는 workspace에서는 즉시 종료하므로
 > 기존 세션에는 영향이 없습니다.
+
+## 설정 마법사 (`roles setup`)
+
+질문에 하나씩 답하면 역할과 팀 설정 파일을 만들어 줍니다. TOML을 직접 쓰지 않아도 됩니다.
+
+```sh
+bin/roles setup            # 역할이 없을 때만 실행됨
+bin/roles setup --force    # 이미 있어도 다시 정함 (roles.toml 덮어씀)
+bin/roles setup --list-presets          # 기업 팀 구조 프리셋 목록
+bin/roles setup --preset toss-silo      # 프리셋으로 바로 시작 (첫 질문 생략)
+```
+
+### 기업 팀 구조 프리셋
+
+첫 질문 "어떤 구조로 팀을 만들까요?"에서 잘 알려진 회사의 팀 구조를 골라 시작할 수 있습니다.
+조직도를 그대로 옮긴 것이 아니라, 그 팀 구조의 역할 분담을 에이전트 역할로 옮긴 출발점입니다.
+
+| id | 구조 | 리드 | 역할 (추천 에이전트) |
+|---|---|---|---|
+| `toss-silo` | 토스 사일로: PO가 이끄는 작은 목적 조직 | `po` | po·designer·analyst = claude, frontend·server = codex |
+| `daangn-squad` | 당근 스쿼드: 하나의 문제 영역을 끝까지 맡는 교차 기능 팀 | `pm` | pm·designer·data = claude, client·backend = codex |
+| `baemin-tf` | 배민 TF: 미션 단위로 모였다 흩어지는 태스크포스 | `tf-lead` | tf-lead·qa·ops = claude, builder = codex |
+| `spotify-squad` | Spotify 스쿼드: PO + 애자일 코치 + 엔지니어 | `po` | po·coach·reviewer = claude, engineer = codex |
+| `amazon-two-pizza` | Amazon 투 피자 팀: 단일 책임 오너가 서비스 하나를 책임 | `owner` | owner·reviewer·oncall = claude, sde = codex |
+
+프리셋을 고르면 역할마다 담당 업무 `prompt`가 미리 채워지고, 아래 항목만 묻습니다.
+- **역할별 에이전트** (claude / codex). 기획·리뷰·분석 역할은 claude, 코드를 쓰는 역할은 codex가 추천값입니다.
+  1. 추천 구성 그대로 (기본값)
+  2. 역할마다 고르기: 역할별로 claude/codex를 묻고, Enter는 그 역할의 추천값입니다
+  3. 모두 claude / 4. 모두 codex
+- **모델**: 1. 추천 모델 그대로(기본값) / 2. 각 CLI 기본 모델(지정 안 함) / 3. 에이전트별로 하나씩 / 4. 역할마다 고르기(Enter = 추천)
+  - 추천 모델은 역할의 성격을 4단계로 나눠 정했습니다. 역할마다 claude용·codex용이 따로 있어, 에이전트를 바꿔도 추천이 따라갑니다.
+
+    | 단계 | 역할 | claude | codex | 근거 |
+    |---|---|---|---|---|
+    | LEAD | po, pm, tf-lead, owner | `fable` | `gpt-6-astra` | 문제 정의·우선순위·작업 분해는 고난도 추론·장시간 작업 |
+    | RIGOR | server, backend, reviewer | `opus` | `gpt-6-astra` | API·데이터 계약, 코드 리뷰는 실수 비용이 큼 |
+    | CORE | designer, frontend, client, builder, engineer, sde, analyst, data, qa | `opus` | `gpt-6.1-sol` | 일상적인 구현·명세·테스트·분석 |
+    | LIGHT | coach, ops, oncall | `sonnet` | `gpt-6-luna` | 짧고 체크리스트형인 작업 |
+
+    근거 자료(2026-10 확인): Anthropic [모델 개요](https://platform.claude.com/docs/en/about-claude/models/overview)
+    (fable "demanding reasoning and long-horizon agentic work", opus "long-running agentic coding and knowledge work" · 대부분 작업의 출발점,
+    sonnet "best combination of speed and intelligence"; haiku 4.5는 2026-10-15 이후 퇴역 가능해 제외)와
+    codex CLI 모델 카탈로그의 설명(astra "most demanding work", 6.1-sol "workhorse model for coding", luna "easier tasks").
+    추천값을 바꾸려면 `roles/presets.py`의 `LEAD`/`RIGOR`/`CORE`/`LIGHT`를 고치세요.
+  - codex 추천 모델이 로컬 카탈로그에 없으면(이름 변경, 캐시 없음) 그 역할은 codex 기본 모델을 쓰고 마법사가 알려 줍니다.
+  - claude 선택지는 `claude --model` 별칭 `fable`, `opus`, `sonnet`입니다.
+  - codex 선택지는 로컬 codex CLI의 모델 카탈로그(`$CODEX_HOME/models_cache.json`, 기본 `~/.codex`)에서 노출된 모델을 읽습니다.
+    캐시가 없으면(codex를 한 번도 실행하지 않은 경우) "기본값"과 "직접 입력"만 나옵니다.
+  - 고른 모델은 `roles.toml`에 `agent_args = ["--model", "<모델>"]`로 저장되어 `herdr agent start ... -- --model <모델>`로 전달됩니다.
+  - 리드 pane은 `team-up`을 실행한 곳에서 이미 돌고 있는 에이전트를 그대로 씁니다. 리드 역할에 고른 에이전트·모델은 적용되지 않고, 스폰되는 팀원에만 적용됩니다.
+- **역할 추가 여부** (기본 "아니오"). 예라고 답하면 아래의 직접 정하기 질문으로 역할을 덧붙입니다
+- **리드 역할**: 기본값은 프리셋의 리드
+- **팀 이름**: 기본값은 프리셋 id. 팀 파일의 `description`에는 프리셋 설명이 들어갑니다
+
+프리셋을 추가하거나 고치려면 `roles/presets.py`를 편집하세요.
+
+### 직접 정하기
+
+첫 질문에서 Enter(마지막 항목 "직접 정하기")를 누르면 역할을 하나씩 정합니다. 묻는 순서:
+1. **역할** (하나씩 반복): 이름(영문 소문자·숫자·`-`·`_`), 화면에 보일 이름, 실행 방식을 묻습니다.
+   - AI 에이전트: claude, codex, gemini, opencode 중 선택하거나 `--kind` 값을 직접 입력하고, 담당 업무를 한두 문장으로 적습니다. 이 문장이 역할 `prompt`가 되고 리드의 로스터에도 표시됩니다.
+   - 셸 명령: `pnpm dev`처럼 pane에서 실행할 명령을 적습니다.
+   - 그냥 셸: 아무것도 실행하지 않는 pane입니다.
+2. **역할 추가 여부**: 기본값은 2개가 될 때까지 "예", 그 뒤로는 "아니오"입니다.
+3. **리드 역할**: `team-up`을 실행한 pane이 맡을 역할입니다. 역할이 하나면 묻지 않습니다.
+4. **팀 이름**: 기본값은 `custom`입니다.
+5. **요약 확인**: "이대로 저장할까요?"에 아니오로 답하면 아무것도 저장하지 않습니다.
+
+저장하는 파일(설정 디렉터리 아래):
+
+| 파일 | 내용 |
+|---|---|
+| `roles.toml` | 답한 역할 전부. **기존 파일을 덮어씁니다** |
+| `teams/<팀 이름>.toml` | 리드 + 나머지 역할. `split`/`of` 없이 저장되며 앞 멤버를 기준으로 자동 배치됩니다 |
+| `config.toml` | `default_team`이 없거나 존재하지 않는 팀을 가리킬 때만 새 팀으로 설정. 다른 설정은 건드리지 않습니다 |
+
+자동 실행:
+- 역할이 하나도 없을 때(`roles.toml`이 없거나 `[roles.*]`가 비어 있을 때) `team-up`과 `picker` 메뉴가 마법사를 먼저 실행합니다.
+  `team-up`은 마법사가 만든 팀으로 바로 이어서 팀을 구성합니다.
+- 터미널이 없는 곳(herdr 메뉴 액션, 에이전트가 실행한 셸)에서는 `setup` 팝업 pane을 열고 종료합니다.
+  팝업에서 답한 뒤 `team-up`을 다시 실행하세요.
+- `roles.toml` 문법이 깨진 경우에는 마법사를 띄우지 않고 오류를 보여 줍니다(덮어써서 고치지 않습니다).
+
+마법사가 만든 파일은 그대로 고쳐도 됩니다. 배치(`split`/`of`/`ratio`), 워크플로우 등 세부 항목은 아래 [설정](#설정-configherdrpluginsconfigherdr-roles)을 보세요.
 
 ## 빠른 시작
 
