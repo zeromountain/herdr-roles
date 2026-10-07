@@ -15,7 +15,7 @@ herdr pane에 **역할**을 부여하고, 메인 세션에서 **팀을 구성**(
 
 ```sh
 herdr plugin install zeromountain/herdr-roles   # 또는 로컬 클론을 링크: herdr plugin link ~/dev/herdr-roles
-~/dev/herdr-roles/bin/roles init           # (선택) 예제 설정을 ~/.config/herdr/plugins/config/herdr-roles/ 로 복사
+~/dev/herdr-roles/bin/roles init           # (선택) 예제 설정을 설정 디렉터리(`herdr plugin config-dir herdr-roles`)로 복사
 ```
 
 `init`을 건너뛰어도 됩니다. 역할이 하나도 없으면 첫 `team-up`이 아래의 설정 마법사를 먼저 실행합니다.
@@ -99,7 +99,7 @@ bin/roles setup --preset toss-silo      # 프리셋으로 바로 시작 (첫 질
 |---|---|
 | `roles.toml` | 답한 역할 전부. **기존 파일을 덮어씁니다** |
 | `teams/<팀 이름>.toml` | 리드 + 나머지 역할. `split`/`of` 없이 저장되며 앞 멤버를 기준으로 자동 배치됩니다 |
-| `config.toml` | `default_team`이 없거나 존재하지 않는 팀을 가리킬 때만 새 팀으로 설정. 다른 설정은 건드리지 않습니다 |
+| `config.toml` | `default_team`이 없거나, 그 팀이 없거나, 새 역할로는 구성할 수 없을 때(예: `--force`로 역할을 바꿔 기존 팀의 역할이 사라짐)만 새 팀으로 설정하고 바꿨다고 알려 줍니다. 다른 설정은 건드리지 않습니다 |
 
 자동 실행:
 - 역할이 하나도 없을 때(`roles.toml`이 없거나 `[roles.*]`가 비어 있을 때) `team-up`과 `picker` 메뉴가 마법사를 먼저 실행합니다.
@@ -139,6 +139,14 @@ lead가 `working`이면 로스터 주입을 보류했다가 idle이 될 때 전�
 > 에이전트 셸에서 쓸 때는 `bin/roles`가 `$HERDR_PANE_ID`(진짜 호출 pane)를 쓰므로 이쪽이 정확합니다.
 
 ## 설정 (`~/.config/herdr/plugins/config/herdr-roles/`)
+
+정확한 위치는 `herdr plugin config-dir herdr-roles`가 알려 줍니다. 설정 디렉터리는 아래 순서로 정합니다.
+1. `ROLES_CONFIG_DIR` (직접 지정)
+2. `HERDR_PLUGIN_CONFIG_DIR`: herdr가 메뉴 액션·훅·플러그인 pane을 실행할 때 넘겨 줍니다
+3. `herdr plugin config-dir herdr-roles`: 셸에서 `bin/roles`를 직접 실행할 때 herdr에 물어봅니다
+4. `~/.config/herdr/plugins/config/herdr-roles` (herdr가 없거나 답하지 못할 때)
+
+그래서 기기마다 herdr의 설정 위치가 달라도, 메뉴 액션과 셸 명령이 같은 디렉터리를 봅니다.
 
 | 파일 | 내용 |
 |---|---|

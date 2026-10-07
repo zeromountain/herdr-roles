@@ -2,8 +2,10 @@
 
 Everything is validated eagerly so that `team-up` / `run` fail *before* any pane is touched.
 """
+import functools
 import os
 import re
+import subprocess
 import tomllib
 from dataclasses import dataclass, field
 
@@ -17,8 +19,23 @@ class ConfigError(ValueError):
 
 
 def config_dir():
+    # herdr sets HERDR_PLUGIN_CONFIG_DIR only for actions/hooks/plugin panes. A shell running `bin/roles` directly
+    # asks herdr instead, so both read the same directory even where herdr keeps it somewhere non-default.
     return (os.environ.get("ROLES_CONFIG_DIR") or os.environ.get("HERDR_PLUGIN_CONFIG_DIR")
-            or os.path.expanduser(f"~/.config/herdr/plugins/config/{PLUGIN_ID}"))
+            or _herdr_config_dir() or os.path.expanduser(f"~/.config/herdr/plugins/config/{PLUGIN_ID}"))
+
+
+@functools.cache
+def _herdr_config_dir():
+    """`herdr plugin config-dir herdr-roles`, or None when herdr is missing, too old or fails."""
+    try:
+        out = subprocess.run([os.environ.get("HERDR_BIN_PATH") or "herdr", "plugin", "config-dir", PLUGIN_ID],
+                             capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    lines = out.stdout.strip().splitlines()
+    path = lines[-1].strip() if lines else ""
+    return path if out.returncode == 0 and os.path.isabs(path) else None
 
 
 def state_dir():

@@ -236,15 +236,28 @@ def _write(path, text):
         f.write(text)
 
 
+def _team_loads(cdir, name):
+    try:
+        config.load_team(name, config.load_roles(cdir), cdir)
+        return True
+    except config.ConfigError:
+        return False
+
+
 def _point_default_team(cdir, team):
-    """Make `team-up` without --team find the new team, without disturbing other settings."""
+    """Make `team-up` without --team find the new team, without disturbing other settings.
+
+    Returns the previous default when it was replaced because its team file no longer loads (e.g. `setup --force`
+    rewrote roles.toml and that team's roles are gone), else None.
+    """
     path = os.path.join(cdir, "config.toml")
     if not os.path.exists(path):
         _write(path, f"[settings]\ndefault_team = {_q(team)}\n")
-        return
+        return None
     current = config.load_settings(cdir)["default_team"]
-    if current and os.path.exists(os.path.join(cdir, "teams", f"{current}.toml")):
-        return                      # already points at a real team: leave the user's choice alone
+    if current and _team_loads(cdir, current):
+        return None                 # still a usable team with the new roles: leave the user's choice alone
+    replaced = current if current and os.path.exists(os.path.join(cdir, "teams", f"{current}.toml")) else None
     with open(path, encoding="utf-8") as f:
         text = f.read()
     line = f"default_team = {_q(team)}"
@@ -255,6 +268,7 @@ def _point_default_team(cdir, team):
     else:
         text = f"[settings]\n{line}\n\n" + text
     _write(path, text)
+    return replaced
 
 
 def run_wizard(ask=None, say=None, cdir=None, preset=None):
@@ -272,11 +286,14 @@ def run_wizard(ask=None, say=None, cdir=None, preset=None):
     if os.path.exists(team_path):
         say(f"  ! 팀 '{answers['team']}' 파일이 이미 있어 덮어씁니다.")
     if os.path.exists(os.path.join(cdir, "roles.toml")):
-        say("  ! 역할이 비어 있던 기존 roles.toml 을 덮어씁니다.")
+        say("  ! 기존 roles.toml 을 덮어씁니다.")
     if not _ask_yes_no(ask, say, "이대로 저장할까요?", default=True):
         raise SetupAborted("저장하지 않고 중단했습니다.")
     _write(os.path.join(cdir, "roles.toml"), render_roles(answers["roles"]))
     _write(team_path, render_team(answers))
-    _point_default_team(cdir, answers["team"])
+    replaced = _point_default_team(cdir, answers["team"])
     say(f"저장했어요: {cdir}")
+    if replaced:
+        say(f"기본 팀을 '{replaced}' → '{answers['team']}' 로 바꿨어요. '{replaced}' 팀은 새 역할로 구성할 수 없어요"
+            f" (필요 없으면 teams/{replaced}.toml 을 지우세요).")
     return answers["team"]
