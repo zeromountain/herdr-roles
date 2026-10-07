@@ -247,6 +247,7 @@ lead가 `working`이면 로스터 주입을 보류했다가 idle이 될 때 전�
 | `No module named 'tomllib'` | Python 3.11 미만으로 실행됐습니다. `python3 --version`을 확인하고 3.11+를 설치하세요 (macOS 기본 `/usr/bin/python3`는 3.9). |
 | `error: 입력이 끝나 설정을 중단했습니다` | 질문에 답할 수 없는 곳(에이전트, 파이프)에서 `roles setup`을 실행했습니다. 터미널에서 실행하거나 `yes '' \| roles setup --preset <프리셋>`을 쓰세요. |
 | `이미 역할이 설정돼 있습니다` | 이미 팀을 정했습니다. 다시 정하려면 `roles setup --force`. |
+| 고쳐졌다는 문제(예: 한글 입력 중 `UnicodeDecodeError`)가 그대로 남음 | 설치된 플러그인은 저절로 업데이트되지 않습니다. `herdr plugin install zeromountain/herdr-roles --yes`로 다시 설치하세요. 설치 폴더 이름은 그대로라 `roles` 링크는 다시 걸 필요가 없습니다. 버전은 `git -C ~/.config/herdr/plugins/github/herdr-roles-* log --oneline -1`로 확인합니다. |
 | 팀원 pane에 에이전트가 안 뜨고 `failed` | Claude의 폴더 신뢰(trust) 질문 때문일 수 있습니다. 아래 [알아 둘 점](#알아-둘-점)을 보세요. |
 
 ## 설정 (`~/.config/herdr/plugins/config/herdr-roles/`)
