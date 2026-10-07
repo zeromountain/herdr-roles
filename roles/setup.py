@@ -8,6 +8,7 @@ All I/O goes through `ask`/`say` so the flow is testable without a terminal.
 import json
 import os
 import re
+import sys
 
 from . import config
 from .presets import AGENTS as PRESET_AGENTS, PRESETS, model_choices, recommended_model
@@ -271,9 +272,38 @@ def _point_default_team(cdir, team):
     return replaced
 
 
+def _terminal_input():
+    """`input` for the real terminal.
+
+    Without line editing the tty erases one *byte* per backspace, so erasing a 한글 syllable can leave half of its
+    UTF-8 bytes behind and `input` raises UnicodeDecodeError. readline erases whole characters; decoding with
+    errors="replace" turns whatever still slips through into U+FFFD, which `_reask_garbled` catches.
+    """
+    try:
+        import readline  # noqa: F401  (importing it is what makes `input` use it)
+    except ImportError:
+        pass
+    try:
+        sys.stdin.reconfigure(errors="replace")
+    except (AttributeError, ValueError):
+        pass
+    return input
+
+
+def _reask_garbled(ask, say):
+    def asker(prompt):
+        while True:
+            raw = ask(prompt)
+            if "�" not in raw:
+                return raw
+            say("입력에 깨진 글자가 있어요 (한글을 지우다 일부만 지워진 것 같아요). 다시 입력해 주세요.")
+    return asker
+
+
 def run_wizard(ask=None, say=None, cdir=None, preset=None):
     """Interview, confirm, write. Returns the new team's name; raises SetupAborted if the user declines."""
-    ask, say = ask or input, say or print       # looked up at call time, not bound at import
+    say = say or print                           # looked up at call time, not bound at import
+    ask = _reask_garbled(ask or _terminal_input(), say)
     cdir = cdir or config.config_dir()
     answers = collect(ask, say, preset)
     team_path = os.path.join(cdir, "teams", f"{answers['team']}.toml")
