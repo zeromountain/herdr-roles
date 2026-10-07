@@ -13,7 +13,7 @@ herdr pane에 **역할**을 부여하고, 메인 세션에서 **팀을 구성**(
 
 ## 시작하기
 
-처음 한 번은 아래 4단계를 따라 하면 됩니다.
+처음 한 번은 아래 3단계를 따라 하면 됩니다.
 
 **준비물**: herdr 0.9.1+, Python 3.11+ (표준 라이브러리만 사용), 팀에 쓸 에이전트 CLI(`claude`, `codex`)가 설치·로그인된 상태.
 
@@ -26,35 +26,12 @@ herdr plugin list          # "herdr-roles ... enabled" 가 보이면 성공
 
 > 플러그인은 herdr 전체(모든 세션)에 적용되지만, 팀을 만들지 않은 workspace에서는 아무 일도 하지 않습니다.
 
-### 2단계. `roles` 명령 등록하기
+### 2단계. 팀 정하기 (설정 마법사)
 
-플러그인 명령은 설치된 폴더 안의 `bin/roles`에 있습니다. 매번 긴 경로를 치지 않도록 `roles`라는 이름으로 등록해 둡니다.
-
-```sh
-mkdir -p ~/.local/bin
-ln -sf ~/.config/herdr/plugins/github/herdr-roles-*/bin/roles ~/.local/bin/roles
-roles --help               # 명령 목록이 나오면 성공
-```
-
-`roles: command not found`가 나오면 `~/.local/bin`이 PATH에 없는 것입니다. 한 번만 추가하세요.
+처음에는 `roles` 명령이 아직 등록되지 않았으므로, 설치된 폴더의 `bin/roles`를 경로째 실행합니다.
 
 ```sh
-echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc && exec zsh
-```
-
-<details>
-<summary>GitHub 대신 로컬 클론을 링크해서 쓰는 경우</summary>
-
-```sh
-herdr plugin link <클론 경로>
-ln -sf <클론 경로>/bin/roles ~/.local/bin/roles
-```
-</details>
-
-### 3단계. 팀 정하기 (설정 마법사)
-
-```sh
-roles setup
+python3 ~/.config/herdr/plugins/github/herdr-roles-*/bin/roles setup
 ```
 
 질문에 번호로 답하면 됩니다. **모르겠으면 Enter**를 누르세요. 모든 질문의 기본값이 추천값입니다.
@@ -81,8 +58,23 @@ roles setup
   - server (Server): codex (gpt-6-astra)
   - analyst (Data Analyst): claude (opus)
 이대로 저장할까요? (Y/n):
+저장했어요: ~/.config/herdr/plugins/config/herdr-roles
+
+에이전트에서 쓸 수 있게 연결:
+  ✓ roles 명령: ~/.local/bin/roles 연결했어요
+  ✓ Claude Code 스킬: ~/.claude/skills/herdr-roles 연결했어요
+  ✓ Codex 스킬: ~/.codex/skills/herdr-roles 연결했어요
+
 팀 'toss-silo' 준비 완료. 리드로 쓸 pane 에서 `roles team-up` 을 실행하세요.
 ```
+
+마법사는 저장한 뒤 두 가지를 자동으로 연결합니다(`roles install`과 같습니다). 이후로는 `roles`만 치면 됩니다.
+- **`roles` 명령**: `~/.local/bin/roles` → 플러그인의 `bin/roles`. `~/.local/bin`이 PATH에 없으면 추가하는 명령을 알려 줍니다.
+- **에이전트 스킬**: `~/.claude/skills/herdr-roles`, `~/.codex/skills/herdr-roles` → 플러그인의 `skills/herdr-roles`.
+  Claude Code·Codex가 "팀 구성해줘", "`roles team-up`" 같은 말을 이 셸 명령으로 알아듣게 합니다. 설치된 에이전트에만 연결합니다.
+
+모두 플러그인 폴더를 가리키는 링크라서, 플러그인을 다시 설치하면 함께 최신이 됩니다. 이미 있는 파일은 덮어쓰지 않고,
+다른 곳(예: 로컬 클론)을 가리키는 링크는 그대로 둡니다. 바꾸려면 `roles install --force`.
 
 - 다시 정하고 싶으면 `roles setup --force` (기존 역할 설정을 덮어씁니다).
 - 각 질문의 선택지와 프리셋·추천 모델의 근거는 [설정 마법사 자세히](#설정-마법사-자세히)에 있습니다.
@@ -90,7 +82,7 @@ roles setup
 <details>
 <summary>터미널 대신 다른 방법으로 정하기</summary>
 
-- **herdr 팝업으로**: 2단계를 건너뛰어도 됩니다. herdr 안에서 아래를 실행하면 마법사가 팝업으로 뜹니다.
+- **herdr 팝업으로**: herdr 안에서 아래를 실행하면 마법사가 팝업으로 뜹니다. 끝나면 똑같이 명령과 스킬을 연결합니다.
   ```sh
   herdr plugin pane open --plugin herdr-roles --entrypoint setup
   ```
@@ -102,14 +94,18 @@ roles setup
   ```
 - **예제를 복사해서 직접 고치기**: `roles init`이 개발팀 5역할 예제를 설정 폴더에 복사합니다.
   설정 폴더 위치는 `herdr plugin config-dir herdr-roles`로 확인하고, 파일 형식은 [설정](#설정-configherdrpluginsconfigherdr-roles)을 보세요.
+  이 방법은 마법사를 거치지 않으므로 `roles install`을 따로 한 번 실행하세요.
+- **로컬 클론을 쓸 때**: `herdr plugin link <클론 경로>` 뒤 `<클론 경로>/bin/roles install --force`로 링크를 클론으로 돌립니다.
 </details>
 
-### 4단계. 팀 띄우고 일 시키기
+### 3단계. 팀 띄우고 일 시키기
 
 **리드로 쓸 pane**에서 `team-up`을 실행합니다. 그 pane이 리드가 되고, 나머지 역할은 새 pane으로 스폰되어 에이전트가 뜹니다.
 
-- 리드 pane에서 claude 같은 에이전트가 이미 돌고 있다면, 그 에이전트에게 이렇게 말하면 됩니다.
-  > `roles team-up` 실행해줘
+- 리드 pane에서 Claude Code나 Codex가 돌고 있다면, 그 에이전트에게 이렇게 말하면 됩니다.
+  > 팀 구성해줘  (또는 `roles team-up` 실행해줘)
+
+  스킬은 에이전트가 시작할 때 읽히므로, 2단계 전부터 열려 있던 에이전트는 **새로 시작**하세요.
 - 셸 pane이라면 직접 실행합니다.
   ```sh
   roles team-up --dry-run    # 무엇을 띄울지 미리 보기 (아무것도 만들지 않음)
@@ -222,6 +218,7 @@ roles read --role reviewer --lines 200
 roles run --workflow feature --input "로그인 기능 추가"
 roles advance                    # 반자동 단계에서 다음 역할로 인계
 roles team-down                  # 스폰한 pane만 정리 (lead·직접 만든 pane은 유지)
+roles install [--force]          # roles 명령·에이전트 스킬 연결 (setup 이 자동 실행)
 ```
 
 `--team`을 생략하면 `config.toml`의 `default_team`(마법사가 마지막으로 만든 팀)을 씁니다.
@@ -243,8 +240,9 @@ lead가 `working`이면 로스터 주입을 보류했다가 idle이 될 때 전�
 
 | 증상 | 해결 |
 |---|---|
-| `roles: command not found` | [2단계](#2단계-roles-명령-등록하기)의 링크와 PATH 설정을 확인하세요. 플러그인을 다시 설치한 뒤 생기면 링크를 다시 거세요 (`ln -sf ...` 한 줄). |
-| `No module named 'tomllib'` | Python 3.11 미만으로 실행됐습니다. `python3 --version`을 확인하고 3.11+를 설치하세요 (macOS 기본 `/usr/bin/python3`는 3.9). |
+| `roles: command not found` | `python3 ~/.config/herdr/plugins/github/herdr-roles-*/bin/roles install`로 다시 연결하세요. 출력에 PATH 경고가 있으면 안내된 한 줄을 실행하고 셸(에이전트)을 새로 여세요. |
+| 에이전트에게 `roles team-up`을 시켜도 실행하지 않음 | 스킬이 연결됐는지 `roles install`로 확인하고, 에이전트를 새로 시작하세요(스킬은 시작할 때 읽힙니다). |
+| `herdr-roles 는 Python 3.11+ 가 필요한데 ...` | `roles`는 3.11 미만으로 시작되면 더 새 Python(`python3.1x`, Homebrew)을 찾아 다시 실행합니다. 이 오류는 찾지 못한 것입니다. 에이전트·훅의 로그인 셸은 `~/.zshrc`를 읽지 않아 Homebrew 경로를 모를 수 있습니다. 오류에 나온 대로 `~/.zprofile`에 `brew shellenv`를 추가하거나 `ROLES_PYTHON`으로 지정하세요. |
 | `error: 입력이 끝나 설정을 중단했습니다` | 질문에 답할 수 없는 곳(에이전트, 파이프)에서 `roles setup`을 실행했습니다. 터미널에서 실행하거나 `yes '' \| roles setup --preset <프리셋>`을 쓰세요. |
 | `이미 역할이 설정돼 있습니다` | 이미 팀을 정했습니다. 다시 정하려면 `roles setup --force`. |
 | 고쳐졌다는 문제(예: 한글 입력 중 `UnicodeDecodeError`)가 그대로 남음 | 설치된 플러그인은 저절로 업데이트되지 않습니다. `herdr plugin install zeromountain/herdr-roles --yes`로 다시 설치하세요. 설치 폴더 이름은 그대로라 `roles` 링크는 다시 걸 필요가 없습니다. 버전은 `git -C ~/.config/herdr/plugins/github/herdr-roles-* log --oneline -1`로 확인합니다. |
