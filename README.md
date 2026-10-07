@@ -14,8 +14,21 @@ herdr pane에 **역할**을 부여하고, 메인 세션에서 **팀을 구성**(
 ## 설치
 
 ```sh
-herdr plugin install zeromountain/herdr-roles   # 또는 로컬 클론을 링크: herdr plugin link ~/dev/herdr-roles
-~/dev/herdr-roles/bin/roles init           # (선택) 예제 설정을 설정 디렉터리(`herdr plugin config-dir herdr-roles`)로 복사
+herdr plugin install zeromountain/herdr-roles   # 또는 로컬 클론을 링크: herdr plugin link <클론 경로>
+```
+
+이 문서의 `bin/roles`는 플러그인 코드 안의 실행 파일입니다. 어디에 있는지는 설치 방법에 따라 다릅니다.
+
+| 설치 방법 | `bin/roles` 위치 |
+|---|---|
+| `herdr plugin install` (GitHub) | `~/.config/herdr/plugins/github/herdr-roles-<해시>/bin/roles` |
+| `herdr plugin link <클론 경로>` | `<클론 경로>/bin/roles` |
+
+셸에서 자주 쓴다면 PATH에 링크해 두면 편합니다 (`bin/roles`는 링크로 실행해도 자기 코드를 찾습니다).
+
+```sh
+ln -s ~/.config/herdr/plugins/github/herdr-roles-*/bin/roles ~/.local/bin/roles
+roles init           # (선택) 예제 설정을 설정 디렉터리(`herdr plugin config-dir herdr-roles`)로 복사
 ```
 
 `init`을 건너뛰어도 됩니다. 역할이 하나도 없으면 첫 `team-up`이 아래의 설정 마법사를 먼저 실행합니다.
@@ -35,6 +48,9 @@ bin/roles setup --force    # 이미 있어도 다시 정함 (roles.toml 덮어�
 bin/roles setup --list-presets          # 기업 팀 구조 프리셋 목록
 bin/roles setup --preset toss-silo      # 프리셋으로 바로 시작 (첫 질문 생략)
 ```
+
+마법사는 터미널에서 답을 기다립니다. Claude Code 같은 에이전트에게 실행을 맡기면 답할 입력이 없어 첫 질문에서
+멈추므로, 모든 질문을 추천값(Enter)으로 넘기게 하세요: `yes '' | bin/roles setup --preset toss-silo`.
 
 ### 기업 팀 구조 프리셋
 
