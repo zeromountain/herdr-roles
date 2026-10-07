@@ -1,9 +1,52 @@
 import os
+import shutil
+import tempfile
 import unittest
 
 from helpers import FakeEnv
 from roles import config
 from roles.config import ConfigError
+
+
+class ConfigDirTests(unittest.TestCase):
+    """Without HERDR_PLUGIN_CONFIG_DIR (a plain shell), the config dir comes from `herdr plugin config-dir`."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="roles-cfgdir-")
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        for k in ("ROLES_CONFIG_DIR", "HERDR_PLUGIN_CONFIG_DIR", "HERDR_BIN_PATH"):
+            old = os.environ.pop(k, None)
+            if old is not None:
+                self.addCleanup(os.environ.__setitem__, k, old)
+        self.addCleanup(os.environ.pop, "HERDR_BIN_PATH", None)
+        config._herdr_config_dir.cache_clear()
+        self.addCleanup(config._herdr_config_dir.cache_clear)
+
+    def fake_herdr(self, body):
+        path = os.path.join(self.tmp, "herdr")
+        with open(path, "w") as f:
+            f.write(f"#!/bin/sh\n{body}\n")
+        os.chmod(path, 0o755)
+        os.environ["HERDR_BIN_PATH"] = path
+
+    def test_asks_herdr_for_the_plugin_config_dir(self):
+        self.fake_herdr('[ "$1 $2 $3" = "plugin config-dir herdr-roles" ] && echo /custom/herdr-roles')
+        self.assertEqual(config.config_dir(), "/custom/herdr-roles")
+
+    def test_falls_back_when_herdr_fails_or_is_missing(self):
+        default = os.path.expanduser("~/.config/herdr/plugins/config/herdr-roles")
+        self.fake_herdr("echo 'unknown command' >&2; exit 2")
+        self.assertEqual(config.config_dir(), default)
+        config._herdr_config_dir.cache_clear()
+        os.environ["HERDR_BIN_PATH"] = os.path.join(self.tmp, "no-such-herdr")
+        self.assertEqual(config.config_dir(), default)
+
+    def test_environment_wins_without_calling_herdr(self):
+        self.fake_herdr("exit 99")
+        os.environ["HERDR_PLUGIN_CONFIG_DIR"] = "/from/herdr/env"
+        self.addCleanup(os.environ.pop, "HERDR_PLUGIN_CONFIG_DIR", None)
+        self.assertEqual(config.config_dir(), "/from/herdr/env")
+        self.assertEqual(config._herdr_config_dir.cache_info().currsize, 0)
 
 
 class ConfigTests(FakeEnv):

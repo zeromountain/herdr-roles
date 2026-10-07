@@ -101,10 +101,29 @@ class WizardTests(FakeEnv):
             setup.run_wizard(ask=scripted(TWO_ROLES[:-1] + ["n"]), say=lambda *_: None)
         self.assertEqual(os.listdir(self.cfg), [])
 
-    def test_existing_default_team_is_kept_when_it_still_exists(self):
-        os.remove(os.path.join(self.cfg, "roles.toml"))
-        setup.run_wizard(ask=scripted(TWO_ROLES), say=lambda *_: None)
-        self.assertEqual(config.load_settings()["default_team"], "dev")
+    def test_default_team_that_still_loads_with_the_new_roles_is_kept(self):
+        # a team made only of `planner`, which TWO_ROLES defines again
+        with open(os.path.join(self.cfg, "teams", "solo.toml"), "w") as f:
+            f.write('[team]\nname = "solo"\n\n[[member]]\nrole = "planner"\nlead = true\n')
+        path = os.path.join(self.cfg, "config.toml")
+        with open(path) as f:
+            text = f.read()
+        with open(path, "w") as f:
+            f.write(text.replace('default_team = "dev"', 'default_team = "solo"'))
+        said = []
+        setup.run_wizard(ask=scripted(TWO_ROLES), say=said.append)
+        self.assertEqual(config.load_settings()["default_team"], "solo")
+        self.assertFalse(any("기본 팀을" in s for s in said))
+
+    def test_default_team_broken_by_the_new_roles_is_repointed(self):
+        # `setup --force` over the examples: dev's implementer/reviewer/... are gone from the new roles.toml
+        said = []
+        setup.run_wizard(ask=scripted(TWO_ROLES), say=said.append)
+        s = config.load_settings()
+        self.assertEqual(s["default_team"], "mini")
+        self.assertEqual(s["default_workflow"], "feature")          # other settings untouched
+        self.assertTrue(any("'dev' → 'mini'" in line for line in said))
+        self.assertTrue(any("기존 roles.toml 을 덮어씁니다" in line for line in said))
 
     def test_stale_default_team_is_repointed_and_other_settings_kept(self):
         os.remove(os.path.join(self.cfg, "roles.toml"))
