@@ -73,6 +73,7 @@ class Store:
         data.setdefault("workspace", ws)
         data.setdefault("seq", 0)
         data.setdefault("team", None)
+        data.setdefault("project", None)     # the team's project config dir; hooks have no cwd to find it from
         data.setdefault("panes", {})
         data.setdefault("run", None)
         data.setdefault("pending_roster", None)

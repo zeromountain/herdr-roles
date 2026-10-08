@@ -67,7 +67,7 @@ def _fmt_rows(rows):
 
 # ------------------------------------------------------------------ commands
 def cmd_init(args, h):
-    cdir = config.config_dir()
+    cdir = _project_target() if args.project else config.config_dir()
     copied = []
     for root, _, files in os.walk(EXAMPLES):
         for f in files:
@@ -100,9 +100,14 @@ def _has_terminal():
     return sys.stdin.isatty() and sys.stdout.isatty()
 
 
-def _run_wizard(preset=None):
+def _project_target():
+    """`--project`: the `.herdr-roles/` dir of the project around the current directory (created on write)."""
+    return os.path.join(config.project_root(os.getcwd()), config.PROJECT_DIRNAME)
+
+
+def _run_wizard(preset=None, cdir=None):
     try:
-        team = setupmod.run_wizard(preset=preset)
+        team = setupmod.run_wizard(preset=preset, cdir=cdir)
     except SetupAborted as e:
         raise CliError(str(e))
     except EOFError:    # its own message ("EOF when reading a line") means nothing to the user
@@ -143,10 +148,12 @@ def cmd_setup(args, h):
         return
     if args.preset and args.preset not in setupmod.PRESETS:
         raise CliError(f"알 수 없는 프리셋 '{args.preset}' (사용 가능: {', '.join(setupmod.PRESETS)})")
-    if not setupmod.needs_setup() and not args.force:
-        raise CliError("이미 역할이 설정돼 있습니다 (다시 정하려면 --force: roles.toml 을 덮어씁니다).")
-    team = _run_wizard(args.preset)
-    print(f"\n팀 '{team}' 준비 완료. 리드로 쓸 pane 에서 `roles team-up` 을 실행하세요.")
+    cdir = _project_target() if args.project else config.config_dir()
+    if not setupmod.needs_setup(cdir) and not args.force:
+        raise CliError(f"이미 역할이 설정돼 있습니다: {cdir} (다시 정하려면 --force: roles.toml 을 덮어씁니다).")
+    team = _run_wizard(args.preset, cdir)
+    where = f"이 프로젝트({os.path.dirname(cdir)}) 안의 " if args.project else ""
+    print(f"\n팀 '{team}' 준비 완료. {where}리드로 쓸 pane 에서 `roles team-up` 을 실행하세요.")
     if _has_terminal():
         try:
             input("Enter 로 닫기")
@@ -155,7 +162,11 @@ def cmd_setup(args, h):
 
 
 def cmd_team_up(args, h):
-    pane, _ = _where(h, args)
+    pane, ws = _where(h, args)
+    before = Store().load(ws)
+    if before.get("team") and before.get("project") != config.project_dir():
+        print(f"참고: 이 workspace 의 팀은 {before['project'] or '전역'} 설정으로 만들어졌는데, "
+              f"지금은 {config.project_dir() or '전역'} 설정으로 구성합니다.")
     created = _ensure_roles(h, pane)
     roles, settings = config.load_roles(), config.load_settings()
     team = config.load_team(created or _pick_team_name(args, settings), roles)
@@ -264,13 +275,18 @@ def cmd_reapply(args, h):
     store = Store()
     if not store.workspaces():
         return
-    roles = config.load_roles()
     live_by_ws = {}
     for p in h.pane_list():
         live_by_ws.setdefault(p["workspace_id"], set()).add(p["pane_id"])
     for ws in store.workspaces():
         with store.lock():
             data = store.load(ws)
+            config.set_project(data["project"])     # each workspace's team may come from a different project
+            try:
+                roles = config.load_roles()
+            except ConfigError as e:
+                print(f"{ws}: skipped ({e})")
+                continue
             live = live_by_ws.get(ws, set())
             data["panes"] = {pid: p for pid, p in data["panes"].items() if pid in live}
             bad = display.apply_all(h, data, roles)
@@ -290,6 +306,7 @@ def cmd_dispatch(args, h):
     store = Store()
     if not ws or not pane or not store.exists(ws):
         return
+    config.set_project(store.load(ws)["project"])    # hooks run without the team's cwd
     roles, settings = config.load_roles(), config.load_settings()
     status = payload.get("agent_status")
     try:
@@ -406,12 +423,15 @@ def build_parser():
             sp.add_argument("--json", action="store_true")
         return sp
 
+    project_help = "전역 대신 이 프로젝트의 .herdr-roles/ 에 저장 (git 루트, 없으면 현재 폴더)"
     s = add("init", cmd_init, pane=False, help="예제 설정을 설정 디렉터리로 복사")
     s.add_argument("--force", action="store_true")
+    s.add_argument("--project", action="store_true", help=project_help)
     s = add("setup", cmd_setup, pane=False, help="질문에 답하며 역할·팀 설정 만들기 (역할이 없으면 team-up 이 자동 실행)")
     s.add_argument("--force", action="store_true", help="이미 역할이 있어도 다시 정함 (roles.toml 덮어씀)")
     s.add_argument("--preset", help="기업 팀 구조 프리셋으로 바로 시작 (목록: --list-presets)")
     s.add_argument("--list-presets", action="store_true", help="사용 가능한 팀 구조 프리셋 보기")
+    s.add_argument("--project", action="store_true", help=project_help)
     s = add("install", cmd_install, pane=False,
             help="`roles` 명령을 ~/.local/bin 에, 에이전트 스킬을 Claude Code·Codex 에 연결 (setup 이 자동 실행)")
     s.add_argument("--force", action="store_true", help="다른 곳을 가리키는 기존 링크도 이 플러그인으로 바꿈")
@@ -447,10 +467,39 @@ def build_parser():
     return p
 
 
+def _choose_project(args, h):
+    """Pick the project layer for this command.
+
+    A workspace that already has a team keeps the project it was built from (send/read/status/run act on that team);
+    otherwise the target pane's cwd decides, then the shell's. Hooks (dispatch/reapply) read it per workspace instead.
+    """
+    if args.cmd in ("dispatch", "reapply"):
+        config.set_project(None)
+        return
+    info = None
+    pane = getattr(args, "pane", None) or _context_pane()
+    if pane and args.cmd not in ("init", "setup", "install"):
+        try:
+            info = h.pane_get(pane)
+        except HerdrError:
+            info = None
+    if info and args.cmd != "team-up":
+        store = Store()
+        ws = info.get("workspace_id")
+        if ws and store.exists(ws):
+            data = store.load(ws)
+            if data.get("team"):
+                config.set_project(data["project"])
+                return
+    cwd = (info or {}).get("cwd") or (info or {}).get("foreground_cwd") or os.getcwd()
+    config.set_project(config.find_project(cwd))
+
+
 def main(argv=None, h=None):
     args = build_parser().parse_args(argv)
     h = h or Herdr()
     try:
+        _choose_project(args, h)
         args.fn(args, h)
         return 0
     except (ConfigError, CliError, teammod.TeamError, wfmod.WorkflowError, HerdrError, LockTimeout) as e:

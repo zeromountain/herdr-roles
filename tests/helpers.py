@@ -34,6 +34,10 @@ class FakeEnv(unittest.TestCase):
             self._set_env(k, v)
         self._set_env("HERDR_SESSION", None)
         self._set_env("ROLES_BIN_DIR", None)
+        # no project layer unless a test asks for one (a .herdr-roles/ around the checkout must not leak in)
+        self._set_env("ROLES_PROJECT_DIR", "")
+        config.set_project(None)
+        self.addCleanup(config.set_project, None)
         self._set_env("SHELL", None)    # install's PATH check would otherwise start the user's login shell
         self.cwd = os.path.join(self.tmp, "repo")
         os.makedirs(self.cwd)
