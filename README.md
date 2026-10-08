@@ -219,6 +219,7 @@ roles run --workflow feature --input "로그인 기능 추가"
 roles advance                    # 반자동 단계에서 다음 역할로 인계
 roles team-down                  # 스폰한 pane만 정리 (lead·직접 만든 pane은 유지)
 roles install [--force]          # roles 명령·에이전트 스킬 연결 (setup 이 자동 실행)
+roles setup --project            # 이 프로젝트 전용 팀을 .herdr-roles/ 에 만들기 (프로젝트별 설정 참고)
 ```
 
 `--team`을 생략하면 `config.toml`의 `default_team`(마법사가 마지막으로 만든 팀)을 씁니다.
@@ -267,6 +268,35 @@ lead가 `working`이면 로스터 주입을 보류했다가 idle이 될 때 전�
 
 `examples/`에 개발팀(5역할)과 `plan → build → review ⇄ fix` 워크플로우가 있습니다. 설정은 실행 전에 전부 검증됩니다
 (lead 1개, 정의된 역할, 앞선 멤버만 `of` 참조, 존재하는 `from` 등). 오류가 있으면 pane을 하나도 만들기 전에 실패합니다.
+
+### 프로젝트별 설정 (`.herdr-roles/`)
+
+프로젝트마다 다른 팀을 쓰려면 저장소 루트에 `.herdr-roles/`를 두세요. 형식은 전역 설정 폴더와 같습니다.
+
+```sh
+cd ~/work/my-app
+roles setup --project      # 마법사 결과를 <git 루트>/.herdr-roles/ 에 저장 (전역 설정은 그대로)
+roles init --project       # 또는 예제를 복사해서 직접 고치기
+```
+
+```
+my-app/.herdr-roles/
+├── roles.toml          # 이 프로젝트에만 있는 역할, 또는 전역 역할을 같은 이름으로 덮어쓰기
+├── config.toml         # 예: default_team = "web"
+├── teams/web.toml
+└── workflows/…
+```
+
+- **겹쳐 쓰기**: 전역 설정 위에 프로젝트 설정을 얹습니다. 역할·팀·워크플로우는 이름이 같으면 프로젝트 것이 이기고,
+  `config.toml`은 항목별로 프로젝트 값이 이깁니다. 그래서 프로젝트 팀이 전역 역할(예: `planner`)을 그대로 쓸 수 있고,
+  프로젝트에는 바뀌는 것만 두면 됩니다.
+- **어느 프로젝트인지**: `team-up`은 리드 pane의 작업 폴더에서 위로 올라가며 가장 가까운 `.herdr-roles/`를 찾습니다.
+  없으면 전역 설정만 씁니다. 팀원 pane도 리드와 같은 폴더에서 열립니다.
+- **팀이 뜬 뒤**: 그 workspace는 팀을 만든 프로젝트를 기억합니다. `send`/`read`/`status`/`run`과 훅(워크플로우 인계,
+  재시작 후 표시 복구)은 지금 폴더와 상관없이 그 프로젝트 설정을 씁니다. 다른 프로젝트로 바꾸려면 그 폴더에서 `team-up`을
+  다시 실행하거나 `team-down` 뒤 새로 구성하세요.
+- **공유 여부**: `.herdr-roles/`를 커밋하면 같은 저장소를 쓰는 사람과 팀 구성을 공유하고, `.gitignore`에 넣으면 나만 씁니다.
+- `ROLES_PROJECT_DIR=<경로>`로 프로젝트 폴더를 직접 지정할 수 있고, 빈 값이면 프로젝트 설정을 쓰지 않습니다.
 
 ### 배치
 `split = "right"|"down"`, `of = "<앞선 역할>"`로 기준 pane 옆에 붙입니다. 같은 기준에 여러 개를 붙일 때 `ratio`를

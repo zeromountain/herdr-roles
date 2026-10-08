@@ -10,12 +10,69 @@ import tomllib
 from dataclasses import dataclass, field
 
 PLUGIN_ID = "herdr-roles"
+PROJECT_DIRNAME = ".herdr-roles"
 DIRECTIONS = ("right", "down")
 HANDOFFS = ("last_output", "git_diff", "none")
 
 
 class ConfigError(ValueError):
     pass
+
+
+# The project layer (<repo>/.herdr-roles/) sits on top of the global config dir. The CLI picks it once per command
+# (from the pane's cwd, or from the workspace state for hooks, which run without a cwd) and loaders read it from here.
+_project = None
+
+
+def set_project(path):
+    global _project
+    _project = path or None
+
+
+def project_dir():
+    """Active project config dir. ROLES_PROJECT_DIR overrides (empty string = no project layer)."""
+    env = os.environ.get("ROLES_PROJECT_DIR")
+    if env is not None:
+        return env or None
+    return _project
+
+
+def find_project(start):
+    """Nearest `.herdr-roles/` directory at or above `start`, or None."""
+    if not start:
+        return None
+    d = os.path.abspath(start)
+    while True:
+        cand = os.path.join(d, PROJECT_DIRNAME)
+        if os.path.isdir(cand):
+            return cand
+        parent = os.path.dirname(d)
+        if parent == d:
+            return None
+        d = parent
+
+
+def project_root(start):
+    """Where `--project` creates `.herdr-roles/`: an existing one's parent, else the git top level, else `start`."""
+    found = find_project(start)
+    if found:
+        return os.path.dirname(found)
+    try:
+        out = subprocess.run(["git", "-C", start, "rev-parse", "--show-toplevel"], capture_output=True, text=True,
+                             timeout=5)
+        if out.returncode == 0 and out.stdout.strip():
+            return out.stdout.strip()
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    return os.path.abspath(start)
+
+
+def layers(cdir=None):
+    """Config dirs to read, lowest priority first. An explicit `cdir` means exactly that one dir."""
+    if cdir:
+        return [cdir]
+    project = project_dir()
+    return [config_dir()] + ([project] if project and os.path.isdir(project) else [])
 
 
 def config_dir():
@@ -113,9 +170,11 @@ class Workflow:
 
 
 def load_settings(cdir=None):
-    cdir = cdir or config_dir()
-    path = os.path.join(cdir, "config.toml")
-    data = _load(path).get("settings", {}) if os.path.exists(path) else {}
+    data = {}
+    for d in layers(cdir):      # later layers win key by key
+        path = os.path.join(d, "config.toml")
+        if os.path.exists(path):
+            data.update(_load(path).get("settings", {}))
     return {
         "default_team": data.get("default_team"),
         "default_workflow": data.get("default_workflow"),
@@ -127,11 +186,16 @@ def load_settings(cdir=None):
 
 
 def load_roles(cdir=None):
-    cdir = cdir or config_dir()
-    path = os.path.join(cdir, "roles.toml")
-    raw = _load(path).get("roles", {})
+    """roles.toml of every layer, merged by role name (a project role replaces the global one of the same name)."""
+    paths = [os.path.join(d, "roles.toml") for d in layers(cdir)]
+    present = [p for p in paths if os.path.exists(p)]
+    if not present:
+        raise ConfigError(f"config not found: {' / '.join(paths)}")
+    raw = {}
+    for path in present:
+        raw.update(_load(path).get("roles", {}))
     if not raw:
-        raise ConfigError(f"{path}: no [roles.*] tables")
+        raise ConfigError(f"{' / '.join(present)}: no [roles.*] tables")
     roles = {}
     for name, r in raw.items():
         if r.get("agent") and r.get("command"):
@@ -144,14 +208,22 @@ def load_roles(cdir=None):
 
 
 def list_names(sub, cdir=None):
-    d = os.path.join(cdir or config_dir(), sub)
-    if not os.path.isdir(d):
-        return []
-    return sorted(f[:-5] for f in os.listdir(d) if f.endswith(".toml"))
+    names = set()
+    for layer in layers(cdir):
+        d = os.path.join(layer, sub)
+        if os.path.isdir(d):
+            names.update(f[:-5] for f in os.listdir(d) if f.endswith(".toml"))
+    return sorted(names)
+
+
+def _find(sub, name, cdir):
+    """Path of `<sub>/<name>.toml` in the highest-priority layer that has it (the project's, if any)."""
+    candidates = [os.path.join(d, sub, f"{name}.toml") for d in reversed(layers(cdir))]
+    return next((p for p in candidates if os.path.exists(p)), candidates[0])
 
 
 def load_team(name, roles, cdir=None):
-    path = os.path.join(cdir or config_dir(), "teams", f"{name}.toml")
+    path = _find("teams", name, cdir)
     raw = _load(path)
     t = raw.get("team", {})
     members = []
@@ -183,7 +255,7 @@ def load_team(name, roles, cdir=None):
 
 
 def load_workflow(name, roles, cdir=None):
-    path = os.path.join(cdir or config_dir(), "workflows", f"{name}.toml")
+    path = _find("workflows", name, cdir)
     raw = _load(path)
     w = raw.get("workflow", {})
     steps = []

@@ -7,6 +7,7 @@ import os
 from dataclasses import dataclass
 
 from . import display
+from .config import project_dir
 from .herdr import HerdrError
 
 SPAWNER = "team-up"
@@ -185,6 +186,7 @@ def team_up(h, store, roles, team, lead_pane, settings, dry_run=False):
         data["panes"][lead_pane] = {"role": lead_slot.role, "instance": lead_slot.index, "lead": True,
                                     "team": team.name, "spawned_by": None, "status": "ready", "error": None}
         data["team"] = team.name
+        data["project"] = project_dir()
         store.save(ws, data)
         lead_label = roles[lead_slot.role].label
         cwd = lead_info.get("cwd") or lead_info.get("foreground_cwd")

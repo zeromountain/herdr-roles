@@ -1,6 +1,6 @@
 id = "herdr-roles"
 name = "Herdr Roles"
-version = "0.2.0"
+version = "0.3.0"
 min_herdr_version = "0.9.1"
 description = "pane에 역할을 부여하고, 메인 세션에서 팀을 구성(나머지 역할 pane 스폰)하며, 역할 간 작업을 인계하는 워크플로우"
 platforms = ["macos", "linux"]
