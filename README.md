@@ -237,6 +237,33 @@ lead가 `working`이면 로스터 주입을 보류했다가 idle이 될 때 전�
 > 액션은 **호출한 pane이 아니라 포커스된 pane**을 대상으로 합니다(herdr 액션 컨텍스트의 동작).
 > 에이전트 셸에서 쓸 때는 `roles`가 `$HERDR_PANE_ID`(진짜 호출 pane)를 쓰므로 이쪽이 정확합니다.
 
+## 이전 버전에서 업데이트하기
+
+설치된 플러그인은 저절로 업데이트되지 않습니다. 아래 순서로 올리세요. 설정 파일 형식은 그대로라 기존 팀 설정을 계속 씁니다.
+
+1. **플러그인 다시 설치**
+   ```sh
+   herdr plugin install zeromountain/herdr-roles --yes
+   herdr plugin list          # 커밋이 바뀌었는지 확인
+   ```
+   설치 폴더 이름(`herdr-roles-<id>`)은 그대로라, 이미 있는 `~/.local/bin/roles` 링크는 자동으로 새 버전을 가리킵니다.
+2. **명령·스킬 연결**
+   ```sh
+   roles install
+   ```
+   `roles: command not found`가 나오면(예전에 링크를 만들지 않은 경우) 경로째 실행하세요:
+   `python3 ~/.config/herdr/plugins/github/herdr-roles-*/bin/roles install`. 출력에 PATH 경고가 있으면 안내된 한 줄을 실행하세요.
+   0.1.x에서 올라오면 Claude Code·Codex 스킬이 이때 처음 연결됩니다.
+3. **에이전트 새로 시작**: Claude Code·Codex는 시작할 때만 스킬을 읽습니다.
+4. (선택) **프로젝트 전용 팀**: 필요한 저장소의 터미널에서 `roles setup --project`. 전역 설정은 그대로 둡니다.
+
+따로 할 필요 없는 것:
+- **떠 있는 팀**: `team-down` 하지 않아도 됩니다. 훅은 이벤트마다 `bin/roles`를 새로 실행하므로 재설치 직후부터 새 코드를 씁니다.
+  이전 버전에서 만든 팀은 전역 설정 팀으로 다룹니다.
+- **herdr 재시작**: 액션·훅·pane 등록(`herdr-plugin.toml`)은 버전 번호 말고 바뀌지 않았습니다.
+- **Python 설정**: `roles`는 3.11 미만으로 시작되면 새 Python을 찾아 다시 실행합니다. 찾지 못할 때만 오류 안내대로
+  `~/.zprofile`에 `brew shellenv`를 추가하세요.
+
 ## 문제 해결
 
 | 증상 | 해결 |
@@ -246,7 +273,7 @@ lead가 `working`이면 로스터 주입을 보류했다가 idle이 될 때 전�
 | `herdr-roles 는 Python 3.11+ 가 필요한데 ...` | `roles`는 3.11 미만으로 시작되면 더 새 Python(`python3.1x`, Homebrew)을 찾아 다시 실행합니다. 이 오류는 찾지 못한 것입니다. 에이전트·훅의 로그인 셸은 `~/.zshrc`를 읽지 않아 Homebrew 경로를 모를 수 있습니다. 오류에 나온 대로 `~/.zprofile`에 `brew shellenv`를 추가하거나 `ROLES_PYTHON`으로 지정하세요. |
 | `error: 입력이 끝나 설정을 중단했습니다` | 질문에 답할 수 없는 곳(에이전트, 파이프)에서 `roles setup`을 실행했습니다. 터미널에서 실행하거나 `yes '' \| roles setup --preset <프리셋>`을 쓰세요. |
 | `이미 역할이 설정돼 있습니다` | 이미 팀을 정했습니다. 다시 정하려면 `roles setup --force`. |
-| 고쳐졌다는 문제(예: 한글 입력 중 `UnicodeDecodeError`)가 그대로 남음 | 설치된 플러그인은 저절로 업데이트되지 않습니다. `herdr plugin install zeromountain/herdr-roles --yes`로 다시 설치하세요. 설치 폴더 이름은 그대로라 `roles` 링크는 다시 걸 필요가 없습니다. 버전은 `git -C ~/.config/herdr/plugins/github/herdr-roles-* log --oneline -1`로 확인합니다. |
+| 고쳐졌다는 문제(예: 한글 입력 중 `UnicodeDecodeError`)가 그대로 남음 | 설치된 플러그인은 저절로 업데이트되지 않습니다. [이전 버전에서 업데이트하기](#이전-버전에서-업데이트하기) 순서대로 다시 설치하세요. 버전은 `git -C ~/.config/herdr/plugins/github/herdr-roles-* log --oneline -1`로 확인합니다. |
 | 팀원 pane에 에이전트가 안 뜨고 `failed` | Claude의 폴더 신뢰(trust) 질문 때문일 수 있습니다. 아래 [알아 둘 점](#알아-둘-점)을 보세요. |
 
 ## 설정 (`~/.config/herdr/plugins/config/herdr-roles/`)
