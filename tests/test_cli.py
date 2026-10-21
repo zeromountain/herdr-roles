@@ -66,7 +66,7 @@ class CliTests(FakeEnv):
         rev = self.pane_of("reviewer")
         code, out, _ = self.run_cli("send", "--role", "reviewer", "--text", "check this", "--pane", "w1:p1")
         self.assertEqual(code, 0)
-        self.assertEqual(self.prompts(rev)[-1], "check this")
+        self.assertTrue(self.prompts(rev)[-1].endswith("\n\ncheck this"))
         self.set_output(rev, "noise <<<HANDOFF\nLGTM\n>>> tail")
         _, out, _ = self.run_cli("read", "--role", "reviewer", "--marker", "--pane", "w1:p1")
         self.assertEqual(out.strip(), "LGTM")

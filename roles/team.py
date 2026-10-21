@@ -6,7 +6,7 @@ start, and never touches panes it did not create.
 import os
 from dataclasses import dataclass
 
-from . import display
+from . import display, mail
 from .config import project_dir
 from .herdr import HerdrError
 
@@ -72,16 +72,38 @@ def _mapping(data, team_name):
     return {(p["role"], p.get("instance", 1)): pid for pid, p in data["panes"].items() if p.get("team") == team_name}
 
 
-def _start(h, data, pane, role, instance, team, ws, settings, lead_label):
+def member_briefing(team, roles, role):
+    """First prompt of a spawned member: who it is, who else is on the team, and how work flows back and forth."""
+    lead = roles[team.lead.role]
+    lines = [f"[herdr-roles] 당신은 팀 '{team.name}'의 '{role.label}' 역할입니다. 리드는 '{lead.label}'({lead.name})입니다.",
+             "", "팀원 (역할 이름으로 연락):"]
+    seen = set()
+    for m in team.members:
+        if m.role in seen or m.role == role.name:
+            continue
+        seen.add(m.role)
+        r = roles.get(m.role)
+        kind = " (셸 역할: 보낸 내용이 명령으로 실행됨)" if r and not r.agent else ""
+        lines.append(f"- {m.role}{' (리드)' if m.lead else ''}{kind}: {_describe(r, limit=120)}")
+    lines += ["", "일하는 방법:",
+              "- 지시는 \"[herdr-roles] <보낸 사람>의 요청\" 머리말로 옵니다. 끝나면 마지막에 결과 요약을 "
+              "<<<HANDOFF ... >>> 블록으로 남기세요. 보낸 사람에게 자동으로 보고됩니다.",
+              f'- 다른 역할에게 묻거나 넘길 일이 있으면 직접 요청하세요: {mail.CLI} send --role <역할> --text "<내용>"'
+              " (답은 끝나는 대로 당신에게 오고, 리드에게는 한 줄 참조가 갑니다)",
+              f'- 막히거나 리드의 결정이 필요하면: {mail.CLI} send --role {lead.name} --text "<상황>"']
+    if role.prompt:
+        lines += ["", role.prompt]
+    return "\n".join(lines)
+
+
+def _start(h, data, pane, role, instance, team, ws, settings, roles):
     """Start the role's agent/command in an existing pane and record the outcome in state."""
     info = data["panes"][pane]
     try:
         if role.agent:
             h.agent_start(agent_name(team, role.name, instance, ws), role.agent, pane,
                           timeout_ms=settings["spawn_timeout_ms"], agent_args=role.agent_args)
-            pre = (f"[herdr-roles] 당신은 팀 '{team.name}'의 '{role.label}' 역할입니다. "
-                   f"작업은 리드({lead_label})가 보내며, 결과는 이 화면에 남기세요.")
-            h.agent_prompt(pane, pre + ("\n" + role.prompt if role.prompt else ""))
+            h.agent_prompt(pane, member_briefing(team, roles, role))
         elif role.command:
             h.pane_run(pane, role.command)
         info.update(status="ready", error=None)
@@ -109,12 +131,14 @@ def build_roster(team, roles, data, lead_pane):
         state = "" if p.get("status") == "ready" else f"  ⚠ {p.get('status')}: {p.get('error') or ''}"
         desc = _describe(r)
         lines.append(f"- {p['role']}{_suffix(p.get('instance', 1))} ({pid}) {desc}{state}")
-    cli = f"python3 {os.path.join(ROOT, 'bin', 'roles')}"
+    cli = mail.CLI
     lines += ["", "사용법 (셸에서 실행):",
               f'- 작업 전달: {cli} send --role <역할> --text "<지시>"',
               f"- 결과 읽기: {cli} read --role <역할> --lines 200",
               f"- 팀 상태:   {cli} status",
-              f"- 워크플로우: {cli} run --workflow <이름> --input \"<요청>\""]
+              f"- 워크플로우: {cli} run --workflow <이름> --input \"<요청>\"",
+              "", "보고: send 로 맡긴 일이 끝나면 결과가 이 pane 에 자동으로 보고됩니다(작업 중이면 끝난 뒤 전달).",
+              "팀원끼리 직접 주고받은 요청과 완료도 한 줄 참조로 옵니다. 기다리는 동안 계속 확인할 필요는 없습니다."]
     return "\n".join(lines)
 
 
@@ -188,7 +212,6 @@ def team_up(h, store, roles, team, lead_pane, settings, dry_run=False):
         data["team"] = team.name
         data["project"] = project_dir()
         store.save(ws, data)
-        lead_label = roles[lead_slot.role].label
         cwd = lead_info.get("cwd") or lead_info.get("foreground_cwd")
 
         remaining, chain_last = {}, {}
@@ -212,14 +235,14 @@ def team_up(h, store, roles, team, lead_pane, settings, dry_run=False):
             data["panes"][new] = {"role": s.role, "instance": s.index, "lead": False, "team": team.name,
                                   "spawned_by": SPAWNER, "status": "starting", "error": None}
             store.save(ws, data)
-            _start(h, data, new, roles[s.role], s.index, team, ws, settings, lead_label)
+            _start(h, data, new, roles[s.role], s.index, team, ws, settings, roles)
             store.save(ws, data)
             report["spawned"].append({"role": s.role, "instance": s.index, "pane": new,
                                       "status": data["panes"][new]["status"]})
 
         for s in retry:
             pane = mapping[s.key]
-            _start(h, data, pane, roles[s.role], s.index, team, ws, settings, lead_label)
+            _start(h, data, pane, roles[s.role], s.index, team, ws, settings, roles)
             report["spawned"].append({"role": s.role, "instance": s.index, "pane": pane,
                                       "status": data["panes"][pane]["status"], "retried": True})
 
@@ -256,7 +279,7 @@ def team_down(h, store, ws):
                 p["team"] = None
                 p["lead"] = False
                 kept.append(pid)
-        data.update(team=None, run=None, pending_roster=None)
+        data.update(team=None, run=None, pending_roster=None, asks={}, outbox={})
         store.save(ws, data)
     return {"closed": closed, "kept": kept}
 

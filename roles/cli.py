@@ -6,7 +6,8 @@ import shutil
 import sys
 import time
 
-from . import config, display, handoff, install as installmod, setup as setupmod, team as teammod, workflow as wfmod
+from . import config, display, handoff, install as installmod, mail, setup as setupmod, team as teammod
+from . import workflow as wfmod
 from .config import ConfigError, PLUGIN_ID
 from .herdr import Herdr, HerdrError
 from .setup import SetupAborted
@@ -229,11 +230,20 @@ def cmd_send(args, h):
     roles = config.load_roles()
     if args.role not in roles:
         raise CliError(f"알 수 없는 역할 '{args.role}' (사용 가능: {', '.join(sorted(roles))})")
-    _, ws = _where(h, args)
+    sender, ws = _where(h, args)
     text = sys.stdin.read() if args.text == "-" else args.text
-    pane = _find_role_pane(h, Store(), ws, args.role)
-    wfmod.deliver(h, pane, roles[args.role], text)
-    print(f"sent to {args.role} ({pane})")
+    store = Store()
+    pane = _find_role_pane(h, store, ws, args.role)
+    if not roles[args.role].agent:
+        wfmod.deliver(h, pane, roles[args.role], text)
+        print(f"sent to {args.role} ({pane})")
+        return
+    live = {p["pane_id"]: p for p in h.pane_list(ws)}
+    with store.lock():
+        data = store.load(ws)
+        tracked = mail.send(h, data, roles, sender, pane, text, live)
+        store.save(ws, data)
+    print(f"sent to {args.role} ({pane})" + ("; 끝나면 결과가 이 pane 으로 보고됩니다" if tracked else ""))
 
 
 def cmd_read(args, h):
@@ -312,9 +322,11 @@ def cmd_dispatch(args, h):
     try:
         if ev == "pane.agent_status_changed":
             teammod.flush_roster(h, store, ws, pane, status)
-            res = wfmod.on_status(h, store, roles, ws, pane, status, settings)
+            res = ",".join(filter(None, [mail.on_status(h, store, roles, ws, pane, status, settings),
+                                         wfmod.on_status(h, store, roles, ws, pane, status, settings)]))
         elif ev == "pane.closed":
-            res = wfmod.on_pane_closed(h, store, ws, pane)
+            res = ",".join(filter(None, [mail.on_pane_closed(store, ws, pane),
+                                         wfmod.on_pane_closed(h, store, ws, pane)]))
         else:
             return
     except LockTimeout as e:

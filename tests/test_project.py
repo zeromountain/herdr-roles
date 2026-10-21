@@ -126,7 +126,7 @@ class ProjectTests(FakeEnv):
         self.move_lead(self.outside)
         code, _, err = self.run_cli("send", "--role", "designer", "--text", "mock it up", "--pane", "w1:p1")
         self.assertEqual(code, 0, err)
-        self.assertEqual(self.prompts(self.pane_of("designer"))[-1], "mock it up")
+        self.assertTrue(self.prompts(self.pane_of("designer"))[-1].endswith("\n\nmock it up"))
 
     def test_dispatch_hook_loads_the_project_from_state(self):
         self.run_cli("team-up", "--pane", "w1:p1")

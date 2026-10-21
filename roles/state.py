@@ -77,6 +77,8 @@ class Store:
         data.setdefault("panes", {})
         data.setdefault("run", None)
         data.setdefault("pending_roster", None)
+        data.setdefault("asks", {})          # target pane -> who asked it and when (see mail.py)
+        data.setdefault("outbox", {})        # pane -> messages waiting for that agent's next idle
         return data
 
     def save(self, ws, data):
