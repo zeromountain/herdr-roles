@@ -66,26 +66,34 @@ def send(h, data, roles, sender, target, text, live):
         h.agent_prompt(target, text)
         return False
     me = who(data, roles, sender)
-    h.agent_prompt(target, f"{TAG} {me}의 요청입니다. 끝나면 마지막에 결과 요약을 <<<HANDOFF ... >>> 블록으로 "
-                           f"남기세요. {me}에게 자동으로 보고됩니다.\n\n{text}")
-    ask = data["asks"].setdefault(target, {"from": []})
-    ask.update(sent_at=now_ms(), seen_working=False)
-    ask["from"] = [a for a in ask["from"] if a["pane"] != sender] + [{"pane": sender, "summary": _first_line(text)}]
+    prompt = (f"{TAG} {me}의 요청입니다. 끝나면 마지막에 결과 요약을 <<<HANDOFF ... >>> 블록으로 "
+              f"남기세요. {me}에게 자동으로 보고됩니다.\n\n{text}")
+    ask = data["asks"].setdefault(target, {"from": [], "sent_at": now_ms(), "seen_working": False})
+    # A busy target's next idle ends the task it is on, not this request: hold the request until that idle and
+    # start tracking from there, or the old task's output would be reported as this answer.
+    queued = (live.get(target) or {}).get("agent_status") == "working"
+    if queued:
+        data["outbox"].setdefault(target, []).append(prompt)
+    else:
+        h.agent_prompt(target, prompt)
+        ask.update(sent_at=now_ms(), seen_working=False)
+    ask["from"] = ([a for a in ask["from"] if a["pane"] != sender]
+                   + [{"pane": sender, "summary": _first_line(text), "queued": queued}])
     lead = lead_of(data)
     if lead and lead not in (sender, target):
         post(h, data, lead, f"{TAG} 참조: {me} → {who(data, roles, target)}: {_first_line(text)}",
              busy=(live.get(lead) or {}).get("agent_status") == "working")
-    return True
+    return "queued" if queued else "sent"
 
 
-def _report(h, data, roles, pane, ask, settings):
+def _report(h, data, roles, pane, askers, settings):
     p = data["panes"].get(pane) or {}
     out = handoff.last_output(h, pane, settings["handoff_lines"])
     if len(out) > REPORT_CHARS:
         out = "…" + out[-REPORT_CHARS:]
     me = who(data, roles, pane)
     more = f"(전체 출력: {CLI} read --role {p.get('role', '')} --lines 200)"
-    askers = [a for a in ask["from"] if a["pane"] in data["panes"]]
+    askers = [a for a in askers if a["pane"] in data["panes"]]
     for a in askers:
         post(h, data, a["pane"], f"{TAG} {me} 작업 완료 보고 (요청: {a['summary']})\n\n{out or '(출력 없음)'}\n\n{more}")
     lead = lead_of(data)
@@ -113,22 +121,33 @@ def on_status(h, store, roles, ws, pane, status, settings):
         return None
     with store.lock(timeout=20):
         data = store.load(ws)
-        ask = data["asks"].get(pane)
+        ask = data["asks"].get(pane) or {"from": []}
+        delivered = [a for a in ask["from"] if not a.get("queued")]
+        waiting = [a for a in ask["from"] if a.get("queued")]
         if status == "working":
-            if not ask or ask["seen_working"]:
+            if not delivered or ask["seen_working"]:     # working on something other than a delivered request
                 return None
             ask["seen_working"] = True
             store.save(ws, data)
             return "ask:working"
         res = []
         # an `idle` seen before any `working` is usually the baseline right after the prompt, not an answer
-        if ask and (ask["seen_working"] or now_ms() - ask["sent_at"] >= settings["idle_grace_s"] * 1000):
-            del data["asks"][pane]
-            res.append(f"reported:{_report(h, data, roles, pane, ask, settings)}")
+        if delivered and (ask["seen_working"] or now_ms() - ask["sent_at"] >= settings["idle_grace_s"] * 1000):
+            res.append(f"reported:{_report(h, data, roles, pane, delivered, settings)}")
+            delivered = []
         if _flush(h, data, pane):     # after the report: it reads this pane's output, which a new prompt would move
             res.append("flushed")
+            if waiting:               # the held requests are delivered now: track them from here
+                delivered += [{**a, "queued": False} for a in waiting]
+                waiting = []
+                ask.update(sent_at=now_ms(), seen_working=False)
         if not res:
             return None
+        if delivered or waiting:
+            ask["from"] = delivered + waiting
+            data["asks"][pane] = ask
+        else:
+            data["asks"].pop(pane, None)
         store.save(ws, data)
         return ",".join(res)
 

@@ -241,9 +241,12 @@ def cmd_send(args, h):
     live = {p["pane_id"]: p for p in h.pane_list(ws)}
     with store.lock():
         data = store.load(ws)
-        tracked = mail.send(h, data, roles, sender, pane, text, live)
+        how = mail.send(h, data, roles, sender, pane, text, live)
         store.save(ws, data)
-    print(f"sent to {args.role} ({pane})" + ("; 끝나면 결과가 이 pane 으로 보고됩니다" if tracked else ""))
+    if how == "queued":
+        print(f"queued for {args.role} ({pane}): 지금 하던 일이 끝나면 전달하고, 그 결과를 이 pane 으로 보고합니다")
+    else:
+        print(f"sent to {args.role} ({pane})" + ("; 끝나면 결과가 이 pane 으로 보고됩니다" if how else ""))
 
 
 def cmd_read(args, h):

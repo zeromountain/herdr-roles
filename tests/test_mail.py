@@ -69,6 +69,36 @@ class MailTests(FakeEnv):
         self.assertIn("작업 완료 보고", self.prompts(self.lead)[-1])
         self.assertEqual(self.store.load("w1")["outbox"], {})
 
+    def test_a_busy_target_gets_the_request_after_its_current_task(self):
+        self.set_status(self.rev, "working")                 # busy with something else
+        self.set_output(self.rev, "<<<HANDOFF\nold task\n>>>")
+        before = len(self.prompts(self.rev))
+        out = self.send("reviewer", "check", self.lead)
+        self.assertIn("queued", out)
+        self.assertEqual(len(self.prompts(self.rev)), before)          # not typed into its running turn
+        lead_before = len(self.prompts(self.lead))
+        self.event(self.rev, "idle")                                    # the old task ends: deliver, don't report
+        self.assertTrue(self.prompts(self.rev)[-1].endswith("\n\ncheck"))
+        self.assertEqual(len(self.prompts(self.lead)), lead_before)
+        self.finish(self.rev, "<<<HANDOFF\nnew answer\n>>>")
+        report = self.prompts(self.lead)[-1]
+        self.assertIn("new answer", report)
+        self.assertNotIn("old task", report)
+
+    def test_a_request_queued_behind_another_is_reported_separately(self):
+        self.send("reviewer", "first", self.lead)
+        self.event(self.rev, "working")
+        self.edit_fake(lambda s: s["panes"][self.rev].update(agent_status="working"))
+        self.send("reviewer", "second", self.impl)                     # reviewer is busy with "first"
+        self.set_output(self.rev, "<<<HANDOFF\nanswer one\n>>>")
+        self.event(self.rev, "idle")
+        self.assertIn("answer one", self.prompts(self.lead)[-1])
+        self.assertTrue(self.prompts(self.rev)[-1].endswith("\n\nsecond"))
+        impl_before = len(self.prompts(self.impl))
+        self.finish(self.rev, "<<<HANDOFF\nanswer two\n>>>")
+        self.assertEqual(len(self.prompts(self.impl)), impl_before + 1)
+        self.assertIn("answer two", self.prompts(self.impl)[-1])
+
     def test_long_output_is_cut_and_points_to_read(self):
         self.send("reviewer", "check", self.lead)
         self.finish(self.rev, "x" * 10_000)
