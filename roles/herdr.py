@@ -9,7 +9,9 @@ import subprocess
 
 
 class HerdrError(RuntimeError):
-    pass
+    def __init__(self, message, code=None):
+        super().__init__(message)
+        self.code = code     # herdr's error code (e.g. agent_pane_busy) when it sent one
 
 
 class Herdr:
@@ -37,7 +39,8 @@ class Herdr:
             raise HerdrError(f"{' '.join(map(str, args[:3]))}: non-JSON output: {out[:200]!r} {p.stderr.strip()[:200]}")
         if isinstance(data, dict) and "error" in data:
             err = data["error"]
-            raise HerdrError(f"{' '.join(map(str, args[:3]))}: {err.get('message', err) if isinstance(err, dict) else err}")
+            raise HerdrError(f"{' '.join(map(str, args[:3]))}: {err.get('message', err) if isinstance(err, dict) else err}",
+                             code=err.get("code") if isinstance(err, dict) else None)
         if p.returncode != 0:
             raise HerdrError(f"{' '.join(map(str, args[:3]))}: exit {p.returncode}: {p.stderr.strip()[:200]}")
         return data.get("result", data) if isinstance(data, dict) else data

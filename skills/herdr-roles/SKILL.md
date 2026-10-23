@@ -46,6 +46,7 @@ roles team-down                          # 다 쓰면 정리 (스폰한 pane 만
 roles fleet-up auth billing --task "<auth 팀 지시>" --task "<billing 팀 지시>"   # --task 는 이름 순서대로 하나씩
 roles fleet-up docs=writers --task "..."     # 이름=팀설정 으로 다른 팀 구성 사용 (기본: default_team)
 roles fleet-up auth billing --worktree ...   # 같은 파일을 고칠 수 있는 일이면 팀마다 git worktree 에서
+roles fleet-up api --cwd ~/dev/app --task "..." # 다른 저장소에서 일할 팀 (기본: 이 셸의 현재 폴더)
 roles fleet                                  # 팀별 상태 (working = 보고 대기 중)
 roles send --fleet auth --text "<추가 지시나 답>"   # 그 팀 리드에게 새 요청
 roles read --fleet auth                      # 그 팀 리드 화면 (보고가 늦을 때만)

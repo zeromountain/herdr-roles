@@ -635,7 +635,7 @@ def build_parser():
     s.add_argument("names", nargs="+", metavar="이름[=팀설정]", help="fleet 팀 이름 (=팀설정 으로 팀 구성 지정)")
     s.add_argument("--team", help="팀 설정 기본값 (기본: default_team)")
     s.add_argument("--task", action="append", metavar="지시", help="팀마다 하나씩, 이름 순서대로 ('-' 이면 stdin, 팀 하나일 때)")
-    s.add_argument("--cwd", help="팀의 작업 폴더 (기본: 이 pane 의 폴더)")
+    s.add_argument("--cwd", help="팀의 작업 폴더 (기본: 이 명령을 실행한 셸의 현재 폴더)")
     s.add_argument("--worktree", action="store_true", help="팀마다 git worktree(브랜치 roles/<이름>)를 만들어 그 안에서 작업")
     add("fleet", cmd_fleet, json_out=True, help="fleet 팀 상태")
     s = add("fleet-down", cmd_fleet_down, json_out=True, help="fleet 팀의 workspace 를 닫음 (이름 없으면 전부)")

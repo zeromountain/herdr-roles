@@ -3,7 +3,7 @@ import os
 
 import test_cli
 from helpers import FakeEnv
-from roles import mail
+from roles import mail, team as teammod
 
 
 class FleetTests(FakeEnv):
@@ -73,6 +73,40 @@ class FleetTests(FakeEnv):
         call = self.calls("worktree create")[0]
         self.assertIn("roles/auth", call)
         self.assertEqual(self.fleet()["auth"]["path"], "/worktrees/auth/roles/auth")
+
+    def test_the_team_works_in_the_shells_folder_not_the_orchestrator_panes(self):
+        here = os.path.realpath(os.path.join(self.tmp, "other-repo"))
+        os.makedirs(here)
+        old = os.getcwd()
+        os.chdir(here)
+        self.addCleanup(os.chdir, old)
+        self.up("auth")                                   # the orchestrator pane was opened in self.cwd
+        call = self.calls("workspace create")[0]
+        self.assertEqual(call[call.index("--cwd") + 1], here)
+
+    def test_agents_wait_for_a_new_shell_to_reach_its_prompt(self):
+        self.edit_fake(lambda s: s.update(slow_shells=2))
+        self._wait(SHELL_POLL_S=0)
+        self.up("auth", "--task", "build login")
+        lead, ws = self.fleet()["auth"]["lead"], self.fleet()["auth"]["workspace"]
+        states = {p["role"]: p["status"] for p in self.store.load(ws)["panes"].values()}
+        self.assertEqual(set(states.values()), {"ready"}, states)            # lead and members all started
+        self.assertEqual(self.fake()["panes"][lead]["agent"], "claude")
+        self.assertEqual(len(self.prompts(lead)), 1)
+
+    def test_a_shell_that_never_gets_ready_still_fails(self):
+        self.edit_fake(lambda s: s.update(slow_shells=99))
+        self._wait(SHELL_WAIT_S=0, SHELL_POLL_S=0)
+        code, out, err = self.run_cli("fleet-up", "auth", "--pane", self.orch)
+        lead = self.fleet()["auth"]["lead"]
+        self.assertEqual(self.store.load(self.fleet()["auth"]["workspace"])["panes"][lead]["status"], "failed")
+        self.assertIn("not an available shell", out + err)
+
+    def _wait(self, **values):
+        for k, v in values.items():
+            old = getattr(teammod, k)
+            setattr(teammod, k, v)
+            self.addCleanup(setattr, teammod, k, old)
 
     def test_launching_again_reconciles_and_sends_a_new_request(self):
         lead, _ = self.launch_two()
