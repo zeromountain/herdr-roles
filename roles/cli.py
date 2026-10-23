@@ -303,8 +303,8 @@ def cmd_fleet_up(args, h):
         print(f"{verb} '{r['name']}' (team {r['team']}, workspace {r['workspace']}, lead {r['lead']})"
               + (f" worktree {r['path']}" if r.get("path") else "")
               + (f"; task {r['task']}" if r["task"] else ""))
-        for f in r["failed"]:
-            print(f"  ! {f['role']}: {f['error']}")
+        for f in r["failed"] + [x for x in r["spawned"] if x["status"] != "ready"]:
+            print(f"  ! {f['role']}: {f.get('error') or f['status']}")
     if not args.json and any(r.get("task") for r in results):
         print("\n각 팀의 일이 끝나면 리드의 HANDOFF 보고가 이 pane 으로 옵니다. 기다리며 확인할 필요는 없습니다.")
     if any(r.get("error") for r in results):

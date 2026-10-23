@@ -6,6 +6,7 @@ invocation, so tests can assert on splits, ratios, prompts and notifications.
 """
 import json
 import os
+import re
 import sys
 
 PATH = os.environ["FAKE_HERDR_STATE"]
@@ -97,6 +98,8 @@ elif cmd == "pane report-metadata":
     ok({"type": "ok"})
 elif cmd == "agent start":
     p = s["panes"].get(opt("--pane")) or fail("pane not found")
+    if not re.fullmatch(r"[a-z][a-z0-9_-]{0,31}", args[2]):     # the real herdr's rule
+        fail("agent name must start with a lowercase letter and contain only lowercase letters, digits, '-' or '_'")
     if opt("--kind") in s.get("bad_kinds", []):
         fail(f"unsupported agent kind: {opt('--kind')}")
     p.update(agent=opt("--kind"), agent_status="idle", agent_name=args[2])
@@ -115,7 +118,7 @@ elif cmd == "agent prompt":
 elif cmd in ("workspace create", "worktree create"):
     n = s.setdefault("ws_next", 100) + 1
     s["ws_next"] = n
-    ws, pid = f"w{n}", f"w{n}:p1"
+    ws, pid = f"wA{n}", f"wA{n}:p1"     # real ids carry uppercase letters too (wK, wM ...)
     cwd = opt("--cwd")
     if cmd == "worktree create":
         cwd = f"/worktrees/{opt('--label')}/{opt('--branch')}"

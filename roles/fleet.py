@@ -138,8 +138,10 @@ def up(h, store, orch_pane, name, team_name=None, task=None, cwd=None, worktree=
             sent = mail.send(h, tdata, roles, orch_pane, lead, task, live, origin=origin,
                              lines=settings["handoff_lines"])
             store.save(tws, tdata)
+    tdata = store.load(tws)
+    spawned = [{**x, "error": (tdata["panes"].get(x["pane"]) or {}).get("error")} for x in rep["spawned"]]
     return {"name": name, "team": team.name, "workspace": tws, "lead": lead, "path": path, "created": created,
-            "task": sent, "spawned": rep["spawned"], "failed": rep["failed"]}
+            "task": sent, "spawned": spawned, "failed": rep["failed"]}
 
 
 def send(h, store, orch_pane, name, text):

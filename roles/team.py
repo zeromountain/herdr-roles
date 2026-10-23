@@ -4,6 +4,7 @@
 start, and never touches panes it did not create.
 """
 import os
+import re
 from dataclasses import dataclass
 
 from . import display, mail
@@ -65,7 +66,14 @@ def _suffix(i):
 
 
 def agent_name(team, role, instance, ws):
-    return f"{team.name}-{role}{_suffix(instance)}-{ws}"
+    """herdr agent names: a lowercase letter first, then [a-z0-9_-], at most 32 chars. Workspace ids like `wK` and
+    long team/role names don't fit as-is; the instance and workspace parts are kept whole so names stay unique."""
+    clean = lambda x: re.sub(r"[^a-z0-9_-]+", "-", x.lower()).strip("-")  # noqa: E731
+    tail = _suffix(instance) + "-" + clean(ws)
+    head = clean(f"{team.name}-{role}")
+    if not head[:1].isalpha():
+        head = "a" + head
+    return head[:32 - len(tail)].rstrip("-") + tail
 
 
 def _mapping(data, team_name):

@@ -18,6 +18,16 @@ class TeamTests(FakeEnv):
         self.assertEqual((s["tester"].anchor, s["tester"].direction), (("planner", 1), "down"))
         self.assertEqual((s["runner"].anchor, s["runner"].direction), (("tester", 1), "down"))
 
+    def test_agent_names_follow_herdrs_rule(self):
+        import re
+        rule = re.compile(r"[a-z][a-z0-9_-]{0,31}")
+        self.assertEqual(teammod.agent_name(self.team, "planner", 1, "wK"), "dev-planner-wk")
+        long = type(self.team)(**{**self.team.__dict__, "name": "Very Long Team Name For Testing"})
+        names = {teammod.agent_name(long, "implementer", i, ws) for i in (1, 2) for ws in ("wK", "wM")}
+        self.assertEqual(len(names), 4)                              # still unique per instance and workspace
+        for n in names | {teammod.agent_name(type(self.team)(**{**self.team.__dict__, "name": "9x"}), "r", 1, "w1")}:
+            self.assertTrue(rule.fullmatch(n), n)
+
     def test_team_up_spawns_everything_but_the_lead(self):
         rep = self.up()
         panes = self.fake()["panes"]
