@@ -6,7 +6,8 @@ import shutil
 import sys
 import time
 
-from . import config, display, handoff, install as installmod, mail, setup as setupmod, team as teammod
+from . import config, display, fleet as fleetmod, handoff, install as installmod, mail, setup as setupmod
+from . import team as teammod
 from . import workflow as wfmod
 from .config import ConfigError, PLUGIN_ID
 from .herdr import Herdr, HerdrError
@@ -226,7 +227,21 @@ def _find_role_pane(h, store, ws, role, roles_cfg=None):
     return pane
 
 
+def _one_target(args):
+    if bool(args.role) == bool(args.fleet):
+        raise CliError("--role(이 팀의 역할) 과 --fleet(fleet 팀 이름) 중 하나만 지정하세요.")
+
+
 def cmd_send(args, h):
+    _one_target(args)
+    if args.fleet:
+        sender, _ = _where(h, args)
+        text = sys.stdin.read() if args.text == "-" else args.text
+        how = fleetmod.send(h, Store(), sender, args.fleet, text)
+        print(f"{'queued' if how == 'queued' else 'sent'} to team '{args.fleet}' lead"
+              + (": 리드가 지금 하던 일을 마치면 전달합니다" if how == "queued" else "")
+              + "; 팀의 일이 끝나면 리드의 HANDOFF 보고가 이 pane 으로 옵니다")
+        return
     roles = config.load_roles()
     if args.role not in roles:
         raise CliError(f"알 수 없는 역할 '{args.role}' (사용 가능: {', '.join(sorted(roles))})")
@@ -250,9 +265,70 @@ def cmd_send(args, h):
 
 
 def cmd_read(args, h):
-    _, ws = _where(h, args)
-    pane = _find_role_pane(h, Store(), ws, args.role)
+    _one_target(args)
+    me, ws = _where(h, args)
+    pane = fleetmod.lead_pane(h, Store(), me, args.fleet) if args.fleet else _find_role_pane(h, Store(), ws, args.role)
     print(handoff.last_output(h, pane, args.lines) if args.marker else h.pane_read(pane, lines=args.lines))
+
+
+def cmd_fleet_up(args, h):
+    if setupmod.needs_setup():
+        raise CliError("설정된 역할이 없습니다. 터미널에서 `roles setup` 으로 역할과 팀을 정한 뒤 다시 실행하세요.")
+    specs = [fleetmod.parse_spec(s) for s in args.names]
+    if len({n for n, _ in specs}) != len(specs):
+        raise CliError("같은 팀 이름이 두 번 있습니다.")
+    tasks = args.task or []
+    if tasks and len(tasks) != len(specs):
+        raise CliError(f"--task 는 팀마다 하나씩, 팀 이름과 같은 순서로 주세요 (팀 {len(specs)}개, --task {len(tasks)}개).")
+    if "-" in tasks:
+        if len(tasks) != 1:
+            raise CliError("--task - (stdin) 은 팀이 하나일 때만 쓸 수 있습니다.")
+        tasks = [sys.stdin.read()]
+    me, _ = _where(h, args)
+    store, results = Store(), []
+    for i, (name, team) in enumerate(specs):
+        try:
+            r = fleetmod.up(h, store, me, name, team or args.team, tasks[i] if tasks else None, cwd=args.cwd,
+                            worktree=args.worktree)
+        except (ConfigError, fleetmod.FleetError, teammod.TeamError, HerdrError) as e:
+            r = {"name": name, "error": str(e)}
+        results.append(r)
+    if args.json:
+        print(json.dumps(results, ensure_ascii=False, indent=1))
+    for r in [] if args.json else results:
+        if r.get("error"):
+            print(f"! {r['name']}: {r['error']}", file=sys.stderr)
+            continue
+        verb = "launched" if r["created"] else "reconciled"
+        print(f"{verb} '{r['name']}' (team {r['team']}, workspace {r['workspace']}, lead {r['lead']})"
+              + (f" worktree {r['path']}" if r.get("path") else "")
+              + (f"; task {r['task']}" if r["task"] else ""))
+        for f in r["failed"]:
+            print(f"  ! {f['role']}: {f['error']}")
+    if not args.json and any(r.get("task") for r in results):
+        print("\n각 팀의 일이 끝나면 리드의 HANDOFF 보고가 이 pane 으로 옵니다. 기다리며 확인할 필요는 없습니다.")
+    if any(r.get("error") for r in results):
+        raise CliError(f"{sum(1 for r in results if r.get('error'))}개 팀을 띄우지 못했습니다.")
+
+
+def cmd_fleet(args, h):
+    me, _ = _where(h, args)
+    st = fleetmod.status(h, Store(), me)
+    out = [f"{'TEAM':<16}{'CONFIG':<10}{'WS':<6}{'LEAD':<9}{'STATE':<10}{'MEMBERS':<9}{'REPORTS':<8}"]
+    for r in st["teams"]:
+        out.append(f"{r['name']:<16}{r['team']:<10}{r['workspace']:<6}{(r['lead_status'] or '-'):<9}{r['state']:<10}"
+                   f"{r['members_working']}/{r['members']:<7}{r['reports']:<8}"
+                   + (f" task: {r['task']}" if r.get("task") else "")
+                   + (f"\n{'':<16}↳ {r['last_report']}" if r.get("last_report") else ""))
+    _emit(args, st, "\n".join(out) if st["teams"] else "fleet 팀이 없습니다 (`roles fleet-up <이름> --task ...`).")
+
+
+def cmd_fleet_down(args, h):
+    me, _ = _where(h, args)
+    closed = fleetmod.down(h, Store(), me, args.names)
+    text = "\n".join(f"closed '{c['name']}' ({c['workspace']})" + (f"; worktree 는 남겨 둠: {c['path']}" if c["path"] else "")
+                     for c in closed) or "닫을 fleet 팀이 없습니다."
+    _emit(args, closed, text)
 
 
 def cmd_run(args, h):
@@ -459,13 +535,25 @@ def build_parser():
     add("team-down", cmd_team_down, json_out=True, help="스폰한 pane만 정리")
     s = add("status", cmd_status, json_out=True, help="팀/워크플로우 상태")
     s.add_argument("--notify", action="store_true", help="알림으로도 표시")
-    s = add("send", cmd_send, help="역할 이름으로 프롬프트/명령 전송")
-    s.add_argument("--role", required=True)
+    s = add("send", cmd_send, help="역할 이름(또는 fleet 팀 이름)으로 프롬프트/명령 전송")
+    s.add_argument("--role")
+    s.add_argument("--fleet", metavar="팀이름", help="fleet 팀의 리드에게 요청 (보고는 이 pane 으로)")
     s.add_argument("--text", required=True, help="'-' 이면 stdin")
-    s = add("read", cmd_read, help="역할 pane의 최근 출력 읽기")
-    s.add_argument("--role", required=True)
+    s = add("read", cmd_read, help="역할 pane(또는 fleet 팀 리드)의 최근 출력 읽기")
+    s.add_argument("--role")
+    s.add_argument("--fleet", metavar="팀이름")
     s.add_argument("--lines", type=int, default=200)
     s.add_argument("--marker", action="store_true", help="<<<HANDOFF ... >>> 블록만 추출")
+    s = add("fleet-up", cmd_fleet_up, json_out=True,
+            help="이 pane 을 오케스트레이터로, 팀마다 새 workspace 를 열어 팀을 띄우고 일을 맡김 (팀끼리 병렬 작업)")
+    s.add_argument("names", nargs="+", metavar="이름[=팀설정]", help="fleet 팀 이름 (=팀설정 으로 팀 구성 지정)")
+    s.add_argument("--team", help="팀 설정 기본값 (기본: default_team)")
+    s.add_argument("--task", action="append", metavar="지시", help="팀마다 하나씩, 이름 순서대로 ('-' 이면 stdin, 팀 하나일 때)")
+    s.add_argument("--cwd", help="팀의 작업 폴더 (기본: 이 pane 의 폴더)")
+    s.add_argument("--worktree", action="store_true", help="팀마다 git worktree(브랜치 roles/<이름>)를 만들어 그 안에서 작업")
+    add("fleet", cmd_fleet, json_out=True, help="fleet 팀 상태")
+    s = add("fleet-down", cmd_fleet_down, json_out=True, help="fleet 팀의 workspace 를 닫음 (이름 없으면 전부)")
+    s.add_argument("names", nargs="*", metavar="이름")
     s = add("run", cmd_run, help="워크플로우 시작")
     s.add_argument("--workflow")
     s.add_argument("--input", default="", help="'-' 이면 stdin")
@@ -517,7 +605,8 @@ def main(argv=None, h=None):
         _choose_project(args, h)
         args.fn(args, h)
         return 0
-    except (ConfigError, CliError, teammod.TeamError, wfmod.WorkflowError, HerdrError, LockTimeout) as e:
+    except (ConfigError, CliError, teammod.TeamError, wfmod.WorkflowError, HerdrError, LockTimeout,
+            fleetmod.FleetError) as e:
         print(f"error: {e}", file=sys.stderr)
         return 1
     except KeyboardInterrupt:

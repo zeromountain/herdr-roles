@@ -105,6 +105,21 @@ class Herdr:
             args += ["--seq", seq]
         self.call(*args)
 
+    # ---- workspaces
+    def workspace_create(self, cwd, label, focus=False):
+        """New workspace with one shell pane; returns (workspace_id, root pane id)."""
+        r = self.call("workspace", "create", "--cwd", cwd, "--label", label, "--focus" if focus else "--no-focus")
+        return r["workspace"]["workspace_id"], r["root_pane"]["pane_id"]
+
+    def worktree_create(self, cwd, branch, label, focus=False):
+        """New git worktree of the repo at `cwd`, opened as a workspace; returns (workspace_id, root pane id, path)."""
+        r = self.call("worktree", "create", "--cwd", cwd, "--branch", branch, "--label", label,
+                      "--focus" if focus else "--no-focus")
+        return r["workspace"]["workspace_id"], r["root_pane"]["pane_id"], r["root_pane"].get("cwd")
+
+    def workspace_close(self, workspace_id):
+        self.call("workspace", "close", workspace_id)
+
     # ---- agents
     def agent_start(self, name, kind, pane_id, timeout_ms=None, agent_args=()):
         args = ["agent", "start", name, "--kind", kind, "--pane", pane_id]

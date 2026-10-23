@@ -4,6 +4,11 @@
 (working -> idle/done) the dispatch hook sends its last output -- the last <<<HANDOFF ... >>> block if it printed one --
 back to every pane that asked. A request between two members is copied to the lead as one line. A message for an
 agent that is busy waits in that pane's outbox and goes out on its next idle, so nobody is interrupted mid-task.
+
+An orchestrator's request to a fleet team's lead (`origin`, see fleet.py) comes from another workspace and is
+*sticky*: a lead ends many turns while its members work, so the ask is answered only by a new HANDOFF block -- one
+that was not already on the lead's screen when the request went out -- and the report goes to the orchestrator's
+workspace.
 """
 import os
 
@@ -32,7 +37,7 @@ def lead_of(data):
     return next((pid for pid, p in data["panes"].items() if p.get("lead") and p.get("team")), None)
 
 
-def _first_line(text, limit=80):
+def first_line(text, limit=80):
     line = next((ln.strip() for ln in (text or "").splitlines() if ln.strip()), "")
     return line if len(line) <= limit else line[:limit - 1] + "…"
 
@@ -56,9 +61,43 @@ def post(h, data, pane, text, busy=None):
     return "queued"
 
 
-def send(h, data, roles, sender, target, text, live):
+ORCHESTRATOR = "오케스트레이터"
+
+
+def orchestrator_request(text):
+    return (f"{TAG} {ORCHESTRATOR}의 요청입니다. 팀원에게 나눠 맡기고, 팀의 일이 모두 끝나면 마지막에 결과 요약을 "
+            f"<<<HANDOFF ... >>> 블록으로 남기세요. 그 블록이 {ORCHESTRATOR}에게 자동으로 보고됩니다 "
+            f"(팀원에게 일을 넘기고 기다리는 중에는 HANDOFF 블록을 쓰지 마세요).\n\n{text}")
+
+
+def track_up(data, target, origin, text, queued, baseline):
+    """Track an orchestrator request on `target` (sticky: see the module docstring)."""
+    ask = data["asks"].setdefault(target, {"from": [], "sent_at": now_ms(), "seen_working": False})
+    if not queued:
+        ask.update(sent_at=now_ms(), seen_working=False)
+    # a held request must not replace the one the lead is still working on: that one's answer is still due
+    ask["from"] = ([a for a in ask["from"] if a["pane"] != origin["pane"] or (queued and not a.get("queued"))]
+                   + [{"pane": origin["pane"], "workspace": origin["workspace"], "summary": first_line(text),
+                       "queued": queued, "sticky": True, "baseline": baseline}])
+
+
+def send(h, data, roles, sender, target, text, live, origin=None, lines=200):
     """Prompt the agent in `target`. A request from a team pane is labelled with its sender and tracked, so the
-    target's answer is reported back when it finishes; one between two members is copied to the lead."""
+    target's answer is reported back when it finishes; one between two members is copied to the lead.
+
+    `origin` ({pane, workspace}) is an orchestrator in another workspace asking this team's lead.
+    """
+    if origin:
+        prompt = orchestrator_request(text)
+        queued = (live.get(target) or {}).get("agent_status") == "working"
+        if queued:
+            data["outbox"].setdefault(target, []).append(prompt)
+            baseline = None             # taken when the held request is finally delivered
+        else:
+            baseline = handoff.last_block(h, target, lines)
+            h.agent_prompt(target, prompt)
+        track_up(data, target, origin, text, queued, baseline)
+        return "queued" if queued else "sent"
     asker = data["panes"].get(sender) or {}
     run = data.get("run") or {}
     in_workflow = run.get("state") == "running" and (run.get("current") or {}).get("pane") == target
@@ -78,10 +117,10 @@ def send(h, data, roles, sender, target, text, live):
         h.agent_prompt(target, prompt)
         ask.update(sent_at=now_ms(), seen_working=False)
     ask["from"] = ([a for a in ask["from"] if a["pane"] != sender]
-                   + [{"pane": sender, "summary": _first_line(text), "queued": queued}])
+                   + [{"pane": sender, "summary": first_line(text), "queued": queued}])
     lead = lead_of(data)
     if lead and lead not in (sender, target):
-        post(h, data, lead, f"{TAG} 참조: {me} → {who(data, roles, target)}: {_first_line(text)}",
+        post(h, data, lead, f"{TAG} 참조: {me} → {who(data, roles, target)}: {first_line(text)}",
              busy=(live.get(lead) or {}).get("agent_status") == "working")
     return "queued" if queued else "sent"
 
@@ -99,7 +138,29 @@ def _report(h, data, roles, pane, askers, settings):
     lead = lead_of(data)
     if lead and lead != pane and lead not in {a["pane"] for a in askers}:
         names = ", ".join(who(data, roles, a["pane"]) for a in askers)
-        post(h, data, lead, f"{TAG} 참조: {me} 가 {names} 의 요청을 마쳤습니다: {_first_line(out)}")
+        post(h, data, lead, f"{TAG} 참조: {me} 가 {names} 의 요청을 마쳤습니다: {first_line(out)}")
+    return len(askers)
+
+
+def _report_up(h, store, data, roles, pane, askers, block):
+    """Deliver a fleet lead's new HANDOFF block to the orchestrator pane(s), queued in *their* workspace when busy.
+
+    The caller already holds the session-wide state lock, which covers every workspace file.
+    """
+    name = (data.get("parent") or {}).get("name") or data.get("team") or ""
+    if len(block) > REPORT_CHARS:
+        block = "…" + block[-REPORT_CHARS:]
+    me = who(data, roles, pane)
+    for a in askers:
+        ows = a["workspace"]
+        odata = data if ows == data["workspace"] else store.load(ows)
+        post(h, odata, a["pane"], f"{TAG} 팀 '{name}' {me} 작업 완료 보고 (요청: {a['summary']})\n\n{block}\n\n"
+                                  f"(리드 화면 전체: {CLI} read --fleet {name} --lines 200)")
+        entry = odata["fleet"].get(name)
+        if entry:
+            entry.update(reports=entry.get("reports", 0) + 1, last_report=first_line(block), reported_at=now_ms())
+        if odata is not data:
+            store.save(ows, odata)
     return len(askers)
 
 
@@ -131,14 +192,30 @@ def on_status(h, store, roles, ws, pane, status, settings):
             store.save(ws, data)
             return "ask:working"
         res = []
+        lines = settings["handoff_lines"]
+        local = [a for a in delivered if not a.get("sticky")]
+        up = [a for a in delivered if a.get("sticky")]
         # an `idle` seen before any `working` is usually the baseline right after the prompt, not an answer
-        if delivered and (ask["seen_working"] or now_ms() - ask["sent_at"] >= settings["idle_grace_s"] * 1000):
-            res.append(f"reported:{_report(h, data, roles, pane, delivered, settings)}")
-            delivered = []
+        ready = bool(delivered) and (ask["seen_working"]
+                                     or now_ms() - ask["sent_at"] >= settings["idle_grace_s"] * 1000)
+        if local and ready:
+            res.append(f"reported:{_report(h, data, roles, pane, local, settings)}")
+            local = []
+        if up and ready:              # sticky: only a HANDOFF block the request did not find on screen answers it
+            block = handoff.last_block(h, pane, lines)
+            fresh = [a for a in up if block and block != a.get("baseline")]
+            if fresh:
+                res.append(f"reported-up:{_report_up(h, store, data, roles, pane, fresh, block)}")
+                up = [a for a in up if a not in fresh]
+        delivered = local + up
+        # held orchestrator requests: note what is on screen before they go out, so an old block can't answer them
+        baseline = (handoff.last_block(h, pane, lines)
+                    if data["outbox"].get(pane) and any(a.get("sticky") for a in waiting) else None)
         if _flush(h, data, pane):     # after the report: it reads this pane's output, which a new prompt would move
             res.append("flushed")
             if waiting:               # the held requests are delivered now: track them from here
-                delivered += [{**a, "queued": False} for a in waiting]
+                delivered += [{**a, "queued": False, **({"baseline": baseline} if a.get("sticky") else {})}
+                              for a in waiting]
                 waiting = []
                 ask.update(sent_at=now_ms(), seen_working=False)
         if not res:

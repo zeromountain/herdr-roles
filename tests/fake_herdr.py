@@ -112,6 +112,25 @@ elif cmd == "agent prompt":
     p["prompts"].append(args[3])
     save(s)
     ok({"type": "agent_prompted"})
+elif cmd in ("workspace create", "worktree create"):
+    n = s.setdefault("ws_next", 100) + 1
+    s["ws_next"] = n
+    ws, pid = f"w{n}", f"w{n}:p1"
+    cwd = opt("--cwd")
+    if cmd == "worktree create":
+        cwd = f"/worktrees/{opt('--label')}/{opt('--branch')}"
+    s["panes"][pid] = {"pane_id": pid, "workspace_id": ws, "cwd": cwd, "agent": None, "agent_status": "unknown",
+                       "output": "", "ran": [], "prompts": [], "meta": {}}
+    s["next"][ws] = 1
+    s.setdefault("workspaces", {})[ws] = {"label": opt("--label"), "focus": "--focus" in args}
+    save(s)
+    ok({"type": "workspace_created", "workspace": {"workspace_id": ws, "label": opt("--label")},
+        "root_pane": public(s["panes"][pid])})
+elif cmd == "workspace close":
+    s["panes"] = {k: v for k, v in s["panes"].items() if v["workspace_id"] != args[2]}
+    s.setdefault("closed_workspaces", []).append(args[2])
+    save(s)
+    ok({"type": "ok"})
 elif cmd == "notification show":
     s["notifications"].append({"title": args[2], "body": opt("--body")})
     save(s)
