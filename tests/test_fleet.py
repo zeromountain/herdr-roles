@@ -241,3 +241,44 @@ class FleetTests(FakeEnv):
         self.assertEqual(self.fleet(), {})
         self.assertEqual(sorted(self.fake()["closed_workspaces"]), sorted(wss))
         self.assertFalse(any(p["workspace_id"] in wss for p in self.fake()["panes"].values()))
+
+    def test_a_long_report_keeps_its_beginning(self):
+        lead, _ = self.launch_two()
+        self.event(lead, "working")
+        body = "HEAD: ui.md 고칠 곳\n" + "x" * 5000 + "\nTAIL"
+        self.set_output(lead, f"<<<HANDOFF\n{body}\n>>>")
+        self.event(lead, "idle")
+        report = self.prompts(self.orch)[-1]
+        self.assertIn("HEAD: ui.md 고칠 곳", report)
+        self.assertNotIn("TAIL", report)
+        self.assertIn("이하 생략", report)
+        self.assertLess(len(report), mail.REPORT_CHARS + 500)
+
+    def test_a_quiet_team_without_a_new_block_reports_the_screens_end_not_the_old_block(self):
+        lead, _ = self.launch_two()
+        self.event(lead, "working")
+        self.set_output(lead, "<<<HANDOFF\nfirst result\n>>>")
+        self.event(lead, "idle")
+        self.run_cli("send", "--fleet", "auth", "--text", "second", "--pane", self.orch)
+        self.event(lead, "working")
+        self.set_output(lead, "<<<HANDOFF\nfirst result\n>>>\n" + "y" * 5000 + "\nsecond done")
+        self.event(lead, "idle")
+        report = self.prompts(self.orch)[-1]
+        self.assertIn("second done", report)
+        self.assertNotIn("first result", report)
+
+    def test_the_echoed_instruction_is_not_an_answer(self):
+        lead, _ = self.launch_two()
+        rev = self.delegate(lead)
+        self.event(lead, "working")
+        # the lead's screen shows our request, whose instruction contains "<<<HANDOFF ... >>>"
+        self.set_output(lead, mail.orchestrator_request("finish it") + "\nwaiting for the reviewer")
+        self.event(lead, "idle")
+        self.assertEqual(self.prompts(self.orch), [])
+        self.event(rev, "working")
+        self.set_output(rev, "<<<HANDOFF\nok\n>>>")
+        self.event(rev, "idle")
+        self.event(lead, "working")
+        self.set_output(lead, mail.orchestrator_request("finish it") + "\n<<<HANDOFF\nreal summary\n>>>")
+        self.event(lead, "idle")
+        self.assertIn("real summary", self.prompts(self.orch)[-1])

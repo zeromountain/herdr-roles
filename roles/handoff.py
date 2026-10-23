@@ -6,19 +6,31 @@ import subprocess
 from .config import parse_when
 
 _MARKER = re.compile(r"<<<HANDOFF\s*(.*?)\s*>>>", re.S)
+# Our own instructions ("... 을 <<<HANDOFF ... >>> 블록으로 남기세요") are echoed on the agent's screen; their
+# placeholder must never count as the agent's answer.
+_PLACEHOLDERS = {"", "...", "…"}
+
+
+def _blocks(text):
+    return [b for b in _MARKER.findall(text) if b.strip() not in _PLACEHOLDERS]
 _MAX_FILE = 200_000
 
 
 def last_output(h, pane_id, lines):
     """Terminal text of the pane; if the agent printed a <<<HANDOFF ... >>> block, only its last block."""
+    return report_text(h, pane_id, lines)[0]
+
+
+def report_text(h, pane_id, lines):
+    """(text, is_block): the pane's last HANDOFF block, or its terminal text when it printed none."""
     text = h.pane_read(pane_id, lines=lines)
-    blocks = _MARKER.findall(text)
-    return (blocks[-1] if blocks else text).strip()
+    blocks = _blocks(text)
+    return (blocks[-1] if blocks else text).strip(), bool(blocks)
 
 
 def last_block(h, pane_id, lines):
     """The last <<<HANDOFF ... >>> block on the pane's screen, or None when it printed none."""
-    blocks = _MARKER.findall(h.pane_read(pane_id, lines=lines))
+    blocks = _blocks(h.pane_read(pane_id, lines=lines))
     return blocks[-1].strip() if blocks else None
 
 

@@ -24,6 +24,16 @@ TAG = "[herdr-roles]"
 REPORT_CHARS = 3000
 
 
+def clip(text, is_block):
+    """Fit a report into REPORT_CHARS. A HANDOFF block is a summary written top-down, so its beginning is kept;
+    raw terminal output ends with the agent's conclusion, so its end is kept."""
+    if len(text) <= REPORT_CHARS:
+        return text
+    if is_block:
+        return text[:REPORT_CHARS].rstrip() + "\n…(이하 생략)"
+    return "…" + text[-REPORT_CHARS:]
+
+
 def who(data, roles, pane):
     """'Reviewer(reviewer)' / 'Planner(planner, 리드)' for a team pane, else the pane id."""
     p = data["panes"].get(pane) or {}
@@ -128,9 +138,7 @@ def send(h, data, roles, sender, target, text, live, origin=None, lines=200):
 
 def _report(h, data, roles, pane, askers, settings):
     p = data["panes"].get(pane) or {}
-    out = handoff.last_output(h, pane, settings["handoff_lines"])
-    if len(out) > REPORT_CHARS:
-        out = "…" + out[-REPORT_CHARS:]
+    out = clip(*handoff.report_text(h, pane, settings["handoff_lines"]))
     me = who(data, roles, pane)
     more = f"(전체 출력: {CLI} read --role {p.get('role', '')} --lines 200)"
     askers = [a for a in askers if a["pane"] in data["panes"]]
@@ -157,14 +165,13 @@ def _team_quiet(h, data, lead):
                    for p in live)
 
 
-def _report_up(h, store, data, roles, pane, askers, block):
+def _report_up(h, store, data, roles, pane, askers, block, is_block=True):
     """Deliver a fleet lead's new HANDOFF block to the orchestrator pane(s), queued in *their* workspace when busy.
 
     The caller already holds the session-wide state lock, which covers every workspace file.
     """
     name = (data.get("parent") or {}).get("name") or data.get("team") or ""
-    if len(block) > REPORT_CHARS:
-        block = "…" + block[-REPORT_CHARS:]
+    block = clip(block, is_block)
     me = who(data, roles, pane)
     for a in askers:
         ows = a["workspace"]
@@ -220,9 +227,12 @@ def on_status(h, store, roles, ws, pane, status, settings):
             block = handoff.last_block(h, pane, lines)
             fresh = [a for a in up if block and block != a.get("baseline")]
             if not fresh and _team_quiet(h, data, pane):     # the lead forgot the block, but the team is done
-                fresh, block = up, handoff.last_output(h, pane, lines)
+                # not report_text: a block still on screen is the *previous* answer; the screen's end is this one's
+                fresh, block, is_block = up, h.pane_read(pane, lines=lines).strip(), False
+            else:
+                is_block = True
             if fresh:
-                res.append(f"reported-up:{_report_up(h, store, data, roles, pane, fresh, block)}")
+                res.append(f"reported-up:{_report_up(h, store, data, roles, pane, fresh, block, is_block)}")
                 up = [a for a in up if a not in fresh]
         delivered = local + up
         # held orchestrator requests: note what is on screen before they go out, so an old block can't answer them
