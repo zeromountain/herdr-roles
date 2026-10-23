@@ -266,3 +266,19 @@ class FleetTests(FakeEnv):
         report = self.prompts(self.orch)[-1]
         self.assertIn("second done", report)
         self.assertNotIn("first result", report)
+
+    def test_the_echoed_instruction_is_not_an_answer(self):
+        lead, _ = self.launch_two()
+        rev = self.delegate(lead)
+        self.event(lead, "working")
+        # the lead's screen shows our request, whose instruction contains "<<<HANDOFF ... >>>"
+        self.set_output(lead, mail.orchestrator_request("finish it") + "\nwaiting for the reviewer")
+        self.event(lead, "idle")
+        self.assertEqual(self.prompts(self.orch), [])
+        self.event(rev, "working")
+        self.set_output(rev, "<<<HANDOFF\nok\n>>>")
+        self.event(rev, "idle")
+        self.event(lead, "working")
+        self.set_output(lead, mail.orchestrator_request("finish it") + "\n<<<HANDOFF\nreal summary\n>>>")
+        self.event(lead, "idle")
+        self.assertIn("real summary", self.prompts(self.orch)[-1])
