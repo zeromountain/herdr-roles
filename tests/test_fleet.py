@@ -339,3 +339,43 @@ class FleetTests(FakeEnv):
         code, _, err = self.run_cli("report", "--text", "question: which DB?", "--pane", lead)
         self.assertEqual(code, 0, err)
         self.assertIn("question: which DB?", self.prompts(self.orch)[-1])
+
+    def test_a_request_wrapped_in_a_handoff_block_does_not_answer_the_orchestrator(self):
+        lead, _ = self.launch_two()
+        self.event(lead, "working")
+        code, _, err = self.run_cli("send", "--role", "reviewer", "--text", "<<<HANDOFF\nreview d9..33\n>>>",
+                                    "--pane", lead)
+        self.assertEqual(code, 0, err)
+        ws = self.fleet()["auth"]["workspace"]
+        rev = self.pane_of("reviewer", self.store.load(ws))
+        self.assertNotIn("<<<HANDOFF\nreview", self.prompts(rev)[-1])         # delivered without a live opener
+        self.assertEqual(self.store.load(ws)["asks"][rev]["from"][0]["summary"], "review d9..33")
+        self.set_status(rev, "working")
+        # the lead's screen echoes its own `send --text "<<<HANDOFF ..."` while the reviewer works
+        self.set_output(lead, 'roles send --role reviewer --text "<<<HANDOFF\nreview d9..33\n>>>"\nwaiting')
+        self.event(lead, "idle")
+        self.assertEqual(self.prompts(self.orch), [])
+        code, _, err = self.run_cli("report", "--text", "APPROVED\nnotes", "--pane", rev)
+        self.assertEqual(code, 0, err)
+        header = self.prompts(lead)[-1]
+        self.assertIn("(요청: review d9..33)", header)
+        self.assertNotIn("<<<HANDOFF", header)
+        self.set_status(rev, "idle")
+        self.set_status(self.pane_of("tester", self.store.load(ws)), "working")    # E2E still running
+        self.event(lead, "working")                                        # the lead's screen: the report, then more
+        self.set_output(lead, header + "\nforwarding to implementer >>>")
+        self.event(lead, "idle")
+        self.assertEqual(self.prompts(self.orch), [])                     # the member's report is not the lead's
+
+    def test_a_block_written_while_members_work_waits_for_the_team(self):
+        lead, _ = self.launch_two()
+        rev = self.delegate(lead)
+        self.event(lead, "working")
+        self.set_status(rev, "working")
+        self.set_output(lead, "<<<HANDOFF\nall done\n>>>")
+        self.event(lead, "idle")
+        self.assertEqual(self.prompts(self.orch), [])
+        self.set_status(rev, "idle")
+        self.event(lead, "working")
+        self.event(lead, "idle")
+        self.assertIn("all done", self.prompts(self.orch)[-1])

@@ -13,6 +13,14 @@ _PLACEHOLDERS = {"", "...", "…"}
 
 def _blocks(text):
     return [b for b in _MARKER.findall(text) if b.strip() not in _PLACEHOLDERS]
+
+
+def defuse(text):
+    """Text we deliver into another agent's pane, with its HANDOFF opener broken. Echoed on the receiver's screen
+    (a lead's request, a member's report), an intact one would open a block there that is not the receiver's
+    answer -- and could pair with an unrelated `>>>` further down."""
+    return (text or "").replace("<<<HANDOFF", "<<HANDOFF")
+
 _MAX_FILE = 200_000
 
 
