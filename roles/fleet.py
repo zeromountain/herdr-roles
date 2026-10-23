@@ -74,7 +74,8 @@ def up(h, store, orch_pane, name, team_name=None, task=None, cwd=None, worktree=
     in what is missing, like team-up, and sends `task` as a new request."""
     info = _orchestrator(h, orch_pane)
     ows = info["workspace_id"]
-    base = cwd or info.get("cwd") or info.get("foreground_cwd") or os.getcwd()
+    # the shell running this command decides, not the folder the orchestrator pane was opened in
+    base = cwd or os.getcwd()
     with store.lock():
         entry = store.load(ows)["fleet"].get(name)
     panes = {p["pane_id"]: p for p in h.pane_list()}
