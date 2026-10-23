@@ -104,11 +104,17 @@ def member_briefing(team, roles, role):
     return "\n".join(lines)
 
 
-def _start(h, data, pane, role, instance, team, ws, settings, roles):
-    """Start the role's agent/command in an existing pane and record the outcome in state."""
+def _start(h, data, pane, role, instance, team, ws, settings, roles, running=None):
+    """Start the role's agent/command in an existing pane and record the outcome in state.
+
+    `running`: the agent kind herdr already sees in the pane. A start that herdr reported as failed may still have
+    brought the agent up (e.g. blocked by a startup notice that later cleared); then it only needs its briefing.
+    """
     info = data["panes"][pane]
     try:
-        if role.agent:
+        if role.agent and running == role.agent:
+            h.agent_prompt(pane, member_briefing(team, roles, role))
+        elif role.agent:
             h.agent_start(agent_name(team, role.name, instance, ws), role.agent, pane,
                           timeout_ms=settings["spawn_timeout_ms"], agent_args=role.agent_args)
             h.agent_prompt(pane, member_briefing(team, roles, role))
@@ -267,7 +273,8 @@ def team_up(h, store, roles, team, lead_pane, settings, dry_run=False, start_lea
 
         for s in retry:
             pane = mapping[s.key]
-            _start(h, data, pane, roles[s.role], s.index, team, ws, settings, roles)
+            _start(h, data, pane, roles[s.role], s.index, team, ws, settings, roles,
+                   running=by_id[pane].get("agent"))
             report["spawned"].append({"role": s.role, "instance": s.index, "pane": pane,
                                       "status": data["panes"][pane]["status"], "retried": True})
 

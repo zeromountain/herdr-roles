@@ -132,6 +132,22 @@ class TeamTests(FakeEnv):
         self.assertEqual(self.store.load("w1")["panes"][impl]["status"], "ready")
         self.assertEqual(self.fake()["panes"][impl]["agent"], "codex")
 
+    def test_a_failed_start_whose_agent_came_up_anyway_only_gets_its_briefing(self):
+        self.up()
+        rev = self.pane_of("reviewer")
+        def came_up(s):           # herdr said "not ready", yet claude is running there now
+            s["panes"][rev].update(agent="claude", agent_status="idle", prompts=[])
+        self.edit_fake(came_up)
+        with self.store.lock():
+            data = self.store.load("w1")
+            data["panes"][rev].update(status="failed", error="agent_not_ready")
+            self.store.save("w1", data)
+        starts = len(self.calls("agent start"))
+        self.up()
+        self.assertEqual(len(self.calls("agent start")), starts)          # no second start in a busy pane
+        self.assertIn("리드는 'Planner'", self.prompts(rev)[0])
+        self.assertEqual(self.store.load("w1")["panes"][rev]["status"], "ready")
+
     def test_agents_lost_in_a_restart_are_started_again(self):
         self.up()
         impl, runner = self.pane_of("implementer"), self.pane_of("runner")
