@@ -163,6 +163,19 @@ class FleetTests(FakeEnv):
         self.assertIn("lgtm", self.prompts(lead)[-1])
         self.assertEqual(self.prompts(self.orch), [])
 
+    def test_an_orchestrator_that_leads_its_own_team(self):
+        code, _, err = self.run_cli("team-up", "--team", "dev", "--pane", self.orch)
+        self.assertEqual(code, 0, err)
+        own = len(self.store.load("w1")["panes"])
+        lead, _ = self.launch_two()
+        self.assertEqual(len(self.store.load("w1")["panes"]), own)        # its own team is untouched
+        self.event(lead, "working")
+        self.set_output(lead, "<<<HANDOFF\nauth done\n>>>")
+        self.event(lead, "idle")
+        self.assertIn("auth done", self.prompts(self.orch)[-1])
+        self.run_cli("team-down", "--pane", self.orch)
+        self.assertEqual(set(self.fleet()), {"auth", "billing"})          # dismantling its own team keeps the fleet
+
     # ---- looking and closing
     def test_status_and_read(self):
         lead, _ = self.launch_two()
