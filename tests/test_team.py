@@ -18,6 +18,16 @@ class TeamTests(FakeEnv):
         self.assertEqual((s["tester"].anchor, s["tester"].direction), (("planner", 1), "down"))
         self.assertEqual((s["runner"].anchor, s["runner"].direction), (("tester", 1), "down"))
 
+    def test_agent_names_follow_herdrs_rule(self):
+        import re
+        rule = re.compile(r"[a-z][a-z0-9_-]{0,31}")
+        self.assertEqual(teammod.agent_name(self.team, "planner", 1, "wK"), "dev-planner-wk")
+        long = type(self.team)(**{**self.team.__dict__, "name": "Very Long Team Name For Testing"})
+        names = {teammod.agent_name(long, "implementer", i, ws) for i in (1, 2) for ws in ("wK", "wM")}
+        self.assertEqual(len(names), 4)                              # still unique per instance and workspace
+        for n in names | {teammod.agent_name(type(self.team)(**{**self.team.__dict__, "name": "9x"}), "r", 1, "w1")}:
+            self.assertTrue(rule.fullmatch(n), n)
+
     def test_team_up_spawns_everything_but_the_lead(self):
         rep = self.up()
         panes = self.fake()["panes"]
@@ -121,6 +131,22 @@ class TeamTests(FakeEnv):
         self.assertEqual(len(self.fake()["splits"]), splits)
         self.assertEqual(self.store.load("w1")["panes"][impl]["status"], "ready")
         self.assertEqual(self.fake()["panes"][impl]["agent"], "codex")
+
+    def test_a_failed_start_whose_agent_came_up_anyway_only_gets_its_briefing(self):
+        self.up()
+        rev = self.pane_of("reviewer")
+        def came_up(s):           # herdr said "not ready", yet claude is running there now
+            s["panes"][rev].update(agent="claude", agent_status="idle", prompts=[])
+        self.edit_fake(came_up)
+        with self.store.lock():
+            data = self.store.load("w1")
+            data["panes"][rev].update(status="failed", error="agent_not_ready")
+            self.store.save("w1", data)
+        starts = len(self.calls("agent start"))
+        self.up()
+        self.assertEqual(len(self.calls("agent start")), starts)          # no second start in a busy pane
+        self.assertIn("리드는 'Planner'", self.prompts(rev)[0])
+        self.assertEqual(self.store.load("w1")["panes"][rev]["status"], "ready")
 
     def test_agents_lost_in_a_restart_are_started_again(self):
         self.up()

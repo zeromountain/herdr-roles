@@ -69,7 +69,8 @@ def _fmt_rows(rows):
 
 # ------------------------------------------------------------------ commands
 def cmd_init(args, h):
-    cdir = _project_target() if args.project else config.config_dir()
+    scope, cdir = _scope(args)
+    _keep_out_of_git(scope, cdir)
     copied = []
     for root, _, files in os.walk(EXAMPLES):
         for f in files:
@@ -107,6 +108,31 @@ def _project_target():
     return os.path.join(config.project_root(os.getcwd()), config.PROJECT_DIRNAME)
 
 
+SCOPE_LABELS = {"global": "전역", "project": "프로젝트", "user": "사용자"}
+
+
+def _scope(args):
+    """`--scope` (or the older `--project`) -> (scope, the dir it writes to)."""
+    scope = args.scope or ("project" if args.project else "global")
+    if args.project and scope != "project":
+        raise CliError("--project 는 --scope project 와 같습니다. 둘 중 하나만 쓰세요.")
+    if scope == "global":
+        return scope, config.config_dir()
+    project = _project_target()
+    return scope, project if scope == "project" else config.local_dir(project)
+
+
+def _keep_out_of_git(scope, cdir):
+    """The user layer lives inside the project's `.herdr-roles/`: a `*` .gitignore keeps it out of commits."""
+    if scope != "user":
+        return
+    os.makedirs(cdir, exist_ok=True)
+    path = os.path.join(cdir, ".gitignore")
+    if not os.path.exists(path):
+        with open(path, "w") as f:
+            f.write("# herdr-roles 사용자 설정: 이 사용자만 씁니다 (커밋하지 않음)\n*\n")
+
+
 def _run_wizard(preset=None, cdir=None):
     try:
         team = setupmod.run_wizard(preset=preset, cdir=cdir)
@@ -119,6 +145,45 @@ def _run_wizard(preset=None, cdir=None):
     print("\n에이전트에서 쓸 수 있게 연결:")
     print("\n".join(installmod.install()))
     return team
+
+
+def cmd_config(args, h):
+    """Show every config layer that applies here and what each one defines (later layers win)."""
+    rows = []
+    for scope, d in config.scoped_layers():
+        row = {"scope": scope, "dir": d, "exists": os.path.isdir(d), "roles": [], "teams": [], "workflows": [],
+               "settings": {}}
+        if row["exists"]:
+            try:
+                path = os.path.join(d, "roles.toml")
+                row["roles"] = sorted(config._load(path).get("roles", {})) if os.path.exists(path) else []
+                path = os.path.join(d, "config.toml")
+                row["settings"] = config._load(path).get("settings", {}) if os.path.exists(path) else {}
+            except ConfigError as e:
+                row["error"] = str(e)
+            for sub in ("teams", "workflows"):
+                sd = os.path.join(d, sub)
+                row[sub] = sorted(f[:-5] for f in os.listdir(sd) if f.endswith(".toml")) if os.path.isdir(sd) else []
+        rows.append(row)
+    try:
+        effective = config.load_settings()
+    except ConfigError as e:
+        effective = {"error": str(e)}
+    out = []
+    for r in rows:
+        out.append(f"[{SCOPE_LABELS[r['scope']]}] {r['dir']}" + ("" if r["exists"] else "  (없음)"))
+        if r.get("error"):
+            out.append(f"  ! {r['error']}")
+        for key, label in (("roles", "역할"), ("teams", "팀"), ("workflows", "워크플로우")):
+            if r[key]:
+                out.append(f"  {label}: {', '.join(r[key])}")
+        if r["settings"]:
+            out.append("  설정: " + ", ".join(f"{k}={v}" for k, v in r["settings"].items()))
+    if not config.project_dir():
+        out.append(f"(프로젝트 설정 없음: `roles setup --scope project|user` 를 여기서 실행하면 {_project_target()}"
+                   " 에 만듭니다)")
+    out.append("\n적용 결과 (아래 계층이 이김): default_team=" + str(effective.get("default_team")))
+    _emit(args, {"layers": rows, "effective": effective}, "\n".join(out))
 
 
 def cmd_install(args, h):
@@ -150,11 +215,13 @@ def cmd_setup(args, h):
         return
     if args.preset and args.preset not in setupmod.PRESETS:
         raise CliError(f"알 수 없는 프리셋 '{args.preset}' (사용 가능: {', '.join(setupmod.PRESETS)})")
-    cdir = _project_target() if args.project else config.config_dir()
+    scope, cdir = _scope(args)
     if not setupmod.needs_setup(cdir) and not args.force:
         raise CliError(f"이미 역할이 설정돼 있습니다: {cdir} (다시 정하려면 --force: roles.toml 을 덮어씁니다).")
+    _keep_out_of_git(scope, cdir)
     team = _run_wizard(args.preset, cdir)
-    where = f"이 프로젝트({os.path.dirname(cdir)}) 안의 " if args.project else ""
+    root = os.path.dirname(cdir if scope == "project" else os.path.dirname(cdir))
+    where = f"{SCOPE_LABELS[scope]} 설정으로 저장했습니다. 이 프로젝트({root}) 안의 " if scope != "global" else ""
     print(f"\n팀 '{team}' 준비 완료. {where}리드로 쓸 pane 에서 `roles team-up` 을 실행하세요.")
     if _has_terminal():
         try:
@@ -303,8 +370,8 @@ def cmd_fleet_up(args, h):
         print(f"{verb} '{r['name']}' (team {r['team']}, workspace {r['workspace']}, lead {r['lead']})"
               + (f" worktree {r['path']}" if r.get("path") else "")
               + (f"; task {r['task']}" if r["task"] else ""))
-        for f in r["failed"]:
-            print(f"  ! {f['role']}: {f['error']}")
+        for f in r["failed"] + [x for x in r["spawned"] if x["status"] != "ready"]:
+            print(f"  ! {f['role']}: {f.get('error') or f['status']}")
     if not args.json and any(r.get("task") for r in results):
         print("\n각 팀의 일이 끝나면 리드의 HANDOFF 보고가 이 pane 으로 옵니다. 기다리며 확인할 필요는 없습니다.")
     if any(r.get("error") for r in results):
@@ -514,15 +581,20 @@ def build_parser():
             sp.add_argument("--json", action="store_true")
         return sp
 
-    project_help = "전역 대신 이 프로젝트의 .herdr-roles/ 에 저장 (git 루트, 없으면 현재 폴더)"
+    project_help = "--scope project 와 같음"
+    scope_help = ("저장할 계층: global(이 PC 전체, 기본) / project(<git 루트>/.herdr-roles/, 커밋해 공유) / "
+                  "user(<git 루트>/.herdr-roles/local/, 나만 씀·git 제외). 우선순위 global < project < user")
     s = add("init", cmd_init, pane=False, help="예제 설정을 설정 디렉터리로 복사")
     s.add_argument("--force", action="store_true")
+    s.add_argument("--scope", choices=tuple(SCOPE_LABELS), help=scope_help)
     s.add_argument("--project", action="store_true", help=project_help)
     s = add("setup", cmd_setup, pane=False, help="질문에 답하며 역할·팀 설정 만들기 (역할이 없으면 team-up 이 자동 실행)")
     s.add_argument("--force", action="store_true", help="이미 역할이 있어도 다시 정함 (roles.toml 덮어씀)")
     s.add_argument("--preset", help="기업 팀 구조 프리셋으로 바로 시작 (목록: --list-presets)")
     s.add_argument("--list-presets", action="store_true", help="사용 가능한 팀 구조 프리셋 보기")
+    s.add_argument("--scope", choices=tuple(SCOPE_LABELS), help=scope_help)
     s.add_argument("--project", action="store_true", help=project_help)
+    add("config", cmd_config, pane=False, json_out=True, help="전역·프로젝트·사용자 설정 계층과 각자 정의한 것 보기")
     s = add("install", cmd_install, pane=False,
             help="`roles` 명령을 ~/.local/bin 에, 에이전트 스킬을 Claude Code·Codex 에 연결 (setup 이 자동 실행)")
     s.add_argument("--force", action="store_true", help="다른 곳을 가리키는 기존 링크도 이 플러그인으로 바꿈")

@@ -4,9 +4,10 @@
 start, and never touches panes it did not create.
 """
 import os
+import re
 from dataclasses import dataclass
 
-from . import display, mail
+from . import display, mail, trust
 from .config import project_dir
 from .herdr import HerdrError
 
@@ -65,7 +66,14 @@ def _suffix(i):
 
 
 def agent_name(team, role, instance, ws):
-    return f"{team.name}-{role}{_suffix(instance)}-{ws}"
+    """herdr agent names: a lowercase letter first, then [a-z0-9_-], at most 32 chars. Workspace ids like `wK` and
+    long team/role names don't fit as-is; the instance and workspace parts are kept whole so names stay unique."""
+    clean = lambda x: re.sub(r"[^a-z0-9_-]+", "-", x.lower()).strip("-")  # noqa: E731
+    tail = _suffix(instance) + "-" + clean(ws)
+    head = clean(f"{team.name}-{role}")
+    if not head[:1].isalpha():
+        head = "a" + head
+    return head[:32 - len(tail)].rstrip("-") + tail
 
 
 def _mapping(data, team_name):
@@ -96,11 +104,17 @@ def member_briefing(team, roles, role):
     return "\n".join(lines)
 
 
-def _start(h, data, pane, role, instance, team, ws, settings, roles):
-    """Start the role's agent/command in an existing pane and record the outcome in state."""
+def _start(h, data, pane, role, instance, team, ws, settings, roles, running=None):
+    """Start the role's agent/command in an existing pane and record the outcome in state.
+
+    `running`: the agent kind herdr already sees in the pane. A start that herdr reported as failed may still have
+    brought the agent up (e.g. blocked by a startup notice that later cleared); then it only needs its briefing.
+    """
     info = data["panes"][pane]
     try:
-        if role.agent:
+        if role.agent and running == role.agent:
+            h.agent_prompt(pane, member_briefing(team, roles, role))
+        elif role.agent:
             h.agent_start(agent_name(team, role.name, instance, ws), role.agent, pane,
                           timeout_ms=settings["spawn_timeout_ms"], agent_args=role.agent_args)
             h.agent_prompt(pane, member_briefing(team, roles, role))
@@ -220,6 +234,8 @@ def team_up(h, store, roles, team, lead_pane, settings, dry_run=False, start_lea
         data["project"] = project_dir()
         store.save(ws, data)
         cwd = lead_info.get("cwd") or lead_info.get("foreground_cwd")
+        if settings.get("trust_folders") and (boot_lead or todo or retry):
+            report["trusted"] = trust.ensure(cwd, [roles[x.role].agent for x in slots if roles[x.role].agent])
         if boot_lead:
             role = roles[lead_slot.role]
             try:
@@ -259,7 +275,8 @@ def team_up(h, store, roles, team, lead_pane, settings, dry_run=False, start_lea
 
         for s in retry:
             pane = mapping[s.key]
-            _start(h, data, pane, roles[s.role], s.index, team, ws, settings, roles)
+            _start(h, data, pane, roles[s.role], s.index, team, ws, settings, roles,
+                   running=by_id[pane].get("agent"))
             report["spawned"].append({"role": s.role, "instance": s.index, "pane": pane,
                                       "status": data["panes"][pane]["status"], "retried": True})
 

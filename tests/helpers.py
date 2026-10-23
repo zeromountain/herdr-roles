@@ -34,6 +34,7 @@ class FakeEnv(unittest.TestCase):
             self._set_env(k, v)
         self._set_env("HERDR_SESSION", None)
         self._set_env("ROLES_BIN_DIR", None)
+        self._set_env("CLAUDE_CONFIG_DIR", None)    # trust.py would otherwise edit the real Claude settings
         # no project layer unless a test asks for one (a .herdr-roles/ around the checkout must not leak in)
         self._set_env("ROLES_PROJECT_DIR", "")
         config.set_project(None)

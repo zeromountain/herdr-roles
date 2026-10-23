@@ -6,9 +6,10 @@ back to every pane that asked. A request between two members is copied to the le
 agent that is busy waits in that pane's outbox and goes out on its next idle, so nobody is interrupted mid-task.
 
 An orchestrator's request to a fleet team's lead (`origin`, see fleet.py) comes from another workspace and is
-*sticky*: a lead ends many turns while its members work, so the ask is answered only by a new HANDOFF block -- one
-that was not already on the lead's screen when the request went out -- and the report goes to the orchestrator's
-workspace.
+*sticky*: a lead ends many turns while its members work, so the ask is answered by a new HANDOFF block -- one that
+was not already on the lead's screen when the request went out -- or, when the lead forgets the block, by its last
+output once the whole team is quiet (nothing asked of a member is still open, nothing waits in an outbox, no member is
+working). The report goes to the orchestrator's workspace.
 """
 import os
 
@@ -142,6 +143,20 @@ def _report(h, data, roles, pane, askers, settings):
     return len(askers)
 
 
+def _team_quiet(h, data, lead):
+    """Nothing the lead handed out is still in flight: no open ask or queued message for another pane, nobody working."""
+    if any(p != lead and ask.get("from") for p, ask in data["asks"].items()):
+        return False
+    if any(p != lead and msgs for p, msgs in data["outbox"].items()):
+        return False
+    try:
+        live = h.pane_list(data["workspace"])
+    except HerdrError:
+        return False
+    return not any(p["pane_id"] != lead and p["pane_id"] in data["panes"] and p.get("agent_status") == "working"
+                   for p in live)
+
+
 def _report_up(h, store, data, roles, pane, askers, block):
     """Deliver a fleet lead's new HANDOFF block to the orchestrator pane(s), queued in *their* workspace when busy.
 
@@ -204,6 +219,8 @@ def on_status(h, store, roles, ws, pane, status, settings):
         if up and ready:              # sticky: only a HANDOFF block the request did not find on screen answers it
             block = handoff.last_block(h, pane, lines)
             fresh = [a for a in up if block and block != a.get("baseline")]
+            if not fresh and _team_quiet(h, data, pane):     # the lead forgot the block, but the team is done
+                fresh, block = up, handoff.last_output(h, pane, lines)
             if fresh:
                 res.append(f"reported-up:{_report_up(h, store, data, roles, pane, fresh, block)}")
                 up = [a for a in up if a not in fresh]

@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 
 PLUGIN_ID = "herdr-roles"
 PROJECT_DIRNAME = ".herdr-roles"
+LOCAL_DIRNAME = "local"         # <project>/.herdr-roles/local/: the user's own overrides, kept out of git
 DIRECTIONS = ("right", "down")
 HANDOFFS = ("last_output", "git_diff", "none")
 
@@ -19,8 +20,10 @@ class ConfigError(ValueError):
     pass
 
 
-# The project layer (<repo>/.herdr-roles/) sits on top of the global config dir. The CLI picks it once per command
-# (from the pane's cwd, or from the workspace state for hooks, which run without a cwd) and loaders read it from here.
+# Three layers, lowest priority first: global (the config dir, this machine), project (<repo>/.herdr-roles/, committed
+# and shared) and user (<repo>/.herdr-roles/local/, this user only). The CLI picks the project once per command (from
+# the pane's cwd, or from the workspace state for hooks, which run without a cwd) and loaders read it from here; the
+# user layer always comes with it.
 _project = None
 
 
@@ -67,12 +70,24 @@ def project_root(start):
     return os.path.abspath(start)
 
 
+def local_dir(project):
+    return os.path.join(project, LOCAL_DIRNAME)
+
+
+def scoped_layers():
+    """(scope, dir) of every layer that applies right now, lowest priority first; dirs may not exist yet."""
+    project = project_dir()
+    out = [("global", config_dir())]
+    if project:
+        out += [("project", project), ("user", local_dir(project))]
+    return out
+
+
 def layers(cdir=None):
     """Config dirs to read, lowest priority first. An explicit `cdir` means exactly that one dir."""
     if cdir:
         return [cdir]
-    project = project_dir()
-    return [config_dir()] + ([project] if project and os.path.isdir(project) else [])
+    return [d for scope, d in scoped_layers() if scope == "global" or os.path.isdir(d)]
 
 
 def config_dir():
@@ -182,6 +197,7 @@ def load_settings(cdir=None):
         "handoff_lines": int(data.get("handoff_lines", 200)),
         "spawn_timeout_ms": int(data.get("spawn_timeout_ms", 60000)),
         "idle_grace_s": int(data.get("idle_grace_s", 10)),
+        "trust_folders": bool(data.get("trust_folders", False)),
     }
 
 
