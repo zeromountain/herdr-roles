@@ -1,6 +1,6 @@
 ---
 name: herdr-roles
-description: herdr pane 에 역할을 나눈 에이전트 팀을 띄우고 일을 나눠 맡기는 `roles` CLI (herdr-roles 플러그인). 사용자가 "roles team-up", "team-up", "팀 구성해줘", "팀 띄워줘", "개발팀 꾸려줘", "팀원에게 시켜줘", "roles send/read/status/team-down", "herdr-roles" 처럼 말하면 사용한다. 셸 명령이므로 직접 실행한다.
+description: herdr pane 에 역할을 나눈 에이전트 팀을 띄우고 일을 나눠 맡기는 `roles` CLI (herdr-roles 플러그인). 사용자가 "roles team-up", "team-up", "팀 구성해줘", "팀 띄워줘", "개발팀 꾸려줘", "팀원에게 시켜줘", "팀 여러 개 병렬로", "팀마다 나눠서 동시에", "fleet", "roles send/read/status/team-down", "herdr-roles" 처럼 말하면 사용한다. 셸 명령이므로 직접 실행한다.
 ---
 
 # herdr-roles (`roles` CLI)
@@ -35,6 +35,33 @@ roles team-down                          # 다 쓰면 정리 (스폰한 pane 만
 `send` 로 맡긴 일은 끝나면 결과가 **보낸 pane 으로 자동 보고**됩니다(`[herdr-roles] ... 작업 완료 보고`).
 계속 `read` 로 확인하며 기다리지 말고 다른 일을 하거나 턴을 마치세요. 보고를 받으면 다음 단계를 진행합니다.
 
+## 여러 팀을 병렬로 지휘할 때 (오케스트레이터)
+
+사용자가 일을 여러 팀에 나눠 **동시에** 시키라고 하면, 지금 pane 을 오케스트레이터로 두고 팀마다 새 workspace 를 띄웁니다.
+일을 서로 겹치지 않는 단위로 나누고, 팀마다 짧은 영문 이름과 구체적인 지시를 정하세요.
+
+```sh
+roles fleet-up auth billing --task "<auth 팀 지시>" --task "<billing 팀 지시>"   # --task 는 이름 순서대로 하나씩
+roles fleet-up docs=writers --task "..."     # 이름=팀설정 으로 다른 팀 구성 사용 (기본: default_team)
+roles fleet-up auth billing --worktree ...   # 같은 파일을 고칠 수 있는 일이면 팀마다 git worktree 에서
+roles fleet                                  # 팀별 상태 (working = 보고 대기 중)
+roles send --fleet auth --text "<추가 지시나 답>"   # 그 팀 리드에게 새 요청
+roles read --fleet auth                      # 그 팀 리드 화면 (보고가 늦을 때만)
+roles fleet-down [이름]                      # 다 끝나고 사용자가 원할 때만 닫기
+```
+
+- 각 팀의 리드가 팀원에게 일을 나누고, 팀의 일이 끝나면 `[herdr-roles] 팀 '<이름>' ... 작업 완료 보고` 가 이 pane 으로 옵니다.
+  보고를 기다리며 `fleet`/`read` 를 반복하지 말고 턴을 마치세요. 보고가 모이면 결과를 합쳐 사용자에게 알립니다.
+- 리드가 결정을 묻는 보고를 보내면 `roles send --fleet <이름>` 으로 답하세요.
+- 팀은 한 팀씩 차례로 뜨지만(팀원마다 몇 초) 뜬 팀부터 바로 일을 시작해 팀끼리 동시에 작업합니다.
+
+## fleet 팀의 리드일 때 (`이 팀은 오케스트레이터가 병렬로 띄운 팀` 을 받은 경우)
+
+- `[herdr-roles] 오케스트레이터의 요청` 을 받으면 팀원에게 나눠 맡기고(`roles send --role ...`) 턴을 마치세요.
+  이때는 HANDOFF 블록을 쓰지 마세요.
+- 팀원 보고가 모두 모여 요청한 일이 끝났을 때만 마지막에 `<<<HANDOFF ... >>>` 블록으로 결과를 요약하세요.
+  그 블록이 오케스트레이터에게 자동으로 보고됩니다. 결정이 필요할 때도 질문을 HANDOFF 블록으로 남기면 됩니다.
+
 ## 팀원일 때 (`[herdr-roles] 당신은 팀 ... 역할입니다` 를 받은 경우)
 
 - 지시는 `[herdr-roles] <보낸 사람>의 요청` 머리말로 옵니다. 끝나면 마지막에 결과 요약을 출력하세요:
@@ -63,3 +90,4 @@ roles team-down                          # 다 쓰면 정리 (스폰한 pane 만
   사용자가 프리셋을 고르면 `yes '' | roles setup --preset <프리셋>` 으로 추천값을 쓸 수 있습니다(목록: `roles setup --list-presets`).
   이미 역할이 있으면 `--force` 가 필요하고 기존 설정을 덮어쓰니, 사용자가 원할 때만 쓰세요.
 - 팀원 pane 에 직접 타이핑하지 말고 `roles send` 를 쓰세요.
+- 사용자가 병렬 팀을 원하지 않으면 `fleet-up` 을 쓰지 마세요. 팀마다 에이전트가 여러 개 떠서 비용이 큽니다.

@@ -135,6 +135,37 @@ roles team-down                                        # 다 쓰면 정리 (스�
 - 내 셸(팀에 속하지 않은 pane)에서 보낸 `send`와 워크플로우가 진행 중인 단계는 추적하지 않습니다.
   워크플로우 단계는 워크플로우 인계가 담당합니다.
 
+### 여러 팀을 병렬로 (fleet)
+
+한 pane(오케스트레이터)에서 팀을 여러 개 띄워 동시에 일을 맡길 수 있습니다. 팀마다 **새 workspace**가 열리고,
+그 workspace의 첫 pane이 리드가 되어 리드 에이전트와 팀원이 뜹니다. 오케스트레이터 pane은 팀에 속하지 않고 지휘만 합니다.
+
+오케스트레이터로 쓸 pane의 에이전트에게 이렇게 말하면 됩니다.
+> auth 팀은 로그인 기능, billing 팀은 결제 버그 수정을 병렬로 맡겨줘
+
+직접 실행한다면:
+
+```sh
+roles fleet-up auth billing --task "로그인 기능 추가" --task "결제 금액 반올림 버그 수정"
+roles fleet-up docs=writers --task "API 문서 정리"   # 이름=팀설정 으로 팀 구성을 팀마다 지정 (기본: default_team)
+roles fleet-up auth billing --worktree ...          # 팀마다 git worktree(브랜치 roles/<이름>)에서 작업
+roles fleet                                         # 팀별 상태: 리드 상태, 일하는 팀원 수, 받은 보고 수
+roles send --fleet auth --text "로그아웃도 추가해줘"   # 그 팀 리드에게 새 요청
+roles read --fleet auth                             # 그 팀 리드의 최근 출력
+roles fleet-down auth                               # 그 팀의 workspace 닫기 (이름 없으면 전부)
+```
+
+- **보고**: 리드는 받은 일을 팀원에게 나눠 맡기고, 팀의 일이 **모두** 끝나면 `<<<HANDOFF ... >>>` 블록으로 결과를 요약합니다.
+  그 블록이 오케스트레이터 pane에 `[herdr-roles] 팀 'auth' ... 작업 완료 보고`로 자동 전달됩니다. 리드가 팀원에게 일을 넘기고
+  턴을 마치는 것은 보고로 치지 않습니다(요청 때 화면에 없던 **새** HANDOFF 블록만 보고). 오케스트레이터가 작업 중이면 끝난 뒤 전달합니다.
+- **병렬의 범위**: 팀을 띄우는 일은 한 팀씩 차례로 진행되고(팀원마다 에이전트 기동에 몇 초), 첫 팀은 띄워지는 즉시
+  일을 시작하므로 **작업은 팀끼리 동시에** 진행됩니다.
+- **같은 저장소를 여러 팀이**: 기본은 모든 팀이 오케스트레이터와 같은 폴더에서 일하므로 같은 파일을 고치면 서로 충돌할 수 있습니다.
+  겹치는 작업이면 `--worktree`를 쓰세요. 단, worktree 폴더(`~/.herdr/worktrees/…`)는 처음 보는 폴더라 Claude가 신뢰 질문을 할 수 있습니다
+  ([알아 둘 점](#알아-둘-점)의 trust 프롬프트 참고). `fleet-down`은 worktree 폴더와 브랜치를 지우지 않습니다.
+- 같은 이름으로 `fleet-up`을 다시 실행하면 새로 만들지 않고 부족한 팀원만 채운 뒤 `--task`를 새 요청으로 보냅니다(멱등).
+- 리드 역할은 에이전트여야 합니다(셸 역할이면 요청을 받을 수 없어 거부합니다).
+
 ## 설정 마법사 자세히
 
 ```sh
@@ -231,6 +262,9 @@ roles advance                    # 반자동 단계에서 다음 역할로 인�
 roles team-down                  # 스폰한 pane만 정리 (lead·직접 만든 pane은 유지)
 roles install [--force]          # roles 명령·에이전트 스킬 연결 (setup 이 자동 실행)
 roles setup --project            # 이 프로젝트 전용 팀을 .herdr-roles/ 에 만들기 (프로젝트별 설정 참고)
+roles fleet-up a b --task "…" --task "…"   # 이 pane = 오케스트레이터, 팀마다 새 workspace 로 병렬 팀 (fleet 참고)
+roles fleet / fleet-down [이름]            # fleet 팀 상태 / 닫기
+roles send --fleet a --text "…"           # fleet 팀 리드에게 요청 (read --fleet 도 같음)
 ```
 
 `--team`을 생략하면 `config.toml`의 `default_team`(마법사가 마지막으로 만든 팀)을 씁니다.
@@ -357,6 +391,8 @@ my-app/.herdr-roles/
 - 이벤트 훅(`pane.agent_status_changed`, `pane.closed`)이 짧게 실행되는 `dispatch`로 상태를 갱신하고 종료합니다. 상주 프로세스가 없습니다.
   `send`의 요청(`asks`: 누가 누구에게)과 바쁜 에이전트에게 보낼 대기 메시지(`outbox`)도 같은 상태 파일에 두고, 이 훅이 보고·전달합니다.
 - 상태 파일은 **세션 이름으로 구분**됩니다(훅은 기본 세션과 이름 있는 세션 모두에서 실행되기 때문).
+- fleet: 오케스트레이터 workspace의 상태 파일에 `fleet`(팀 이름 → workspace·리드)을, 각 팀 workspace에 `parent`(오케스트레이터 pane)를
+  둡니다. 오케스트레이터의 요청은 리드 pane의 `asks`에 다른 workspace 발신으로 기록되고, 보고는 오케스트레이터 workspace의 `outbox`를 거칩니다.
 
 ## 알아 둘 점
 - **trust 프롬프트**: Claude는 폴더마다 "신뢰하시겠습니까?"를 묻고, 그동안 `agent start`가 `blocked`로 실패합니다.
