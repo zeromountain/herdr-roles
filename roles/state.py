@@ -79,7 +79,15 @@ class Store:
         data.setdefault("pending_roster", None)
         data.setdefault("asks", {})          # target pane -> who asked it and when (see mail.py)
         data.setdefault("outbox", {})        # pane -> messages waiting for that agent's next idle
+        data.setdefault("fleet", {})         # orchestrator side: team name -> the workspace it runs in (fleet.py)
+        data.setdefault("parent", None)      # team side: the orchestrator pane that launched this team
         return data
+
+    def remove(self, ws):
+        try:
+            os.remove(self.path(ws))
+        except FileNotFoundError:
+            pass
 
     def save(self, ws, data):
         os.makedirs(self.dir, exist_ok=True)

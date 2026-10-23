@@ -177,7 +177,9 @@ def flush_roster(h, store, ws, pane_id, status):
         return True
 
 
-def team_up(h, store, roles, team, lead_pane, settings, dry_run=False):
+def team_up(h, store, roles, team, lead_pane, settings, dry_run=False, start_lead=False, brief=None):
+    """`start_lead`: also start the lead role's agent in `lead_pane` when none runs there (a fleet team's lead is a
+    fresh shell). `brief`: text appended to the roster, which is then delivered even if nothing new was spawned."""
     panes = h.pane_list()
     by_id = {p["pane_id"]: p for p in panes}
     lead_info = by_id.get(lead_pane)
@@ -201,7 +203,11 @@ def team_up(h, store, roles, team, lead_pane, settings, dry_run=False):
             or (roles[s.role].agent and not by_id[mapping[s.key]].get("agent")))]
         if len(todo) > settings["max_spawn"]:
             raise TeamError(f"team '{team.name}' needs {len(todo)} new panes; max_spawn is {settings['max_spawn']}")
-        plan = ([{"role": s.role, "instance": s.index, "action": "spawn", "direction": s.direction} for s in todo]
+        lead_kind = roles[lead_slot.role].agent
+        boot_lead = bool(start_lead and lead_kind and not lead_info.get("agent"))
+        plan = ([{"role": lead_slot.role, "instance": lead_slot.index, "action": "start-lead", "pane": lead_pane}]
+                if boot_lead else [])
+        plan += ([{"role": s.role, "instance": s.index, "action": "spawn", "direction": s.direction} for s in todo]
                 + [{"role": s.role, "instance": s.index, "action": "retry", "pane": mapping[s.key]} for s in retry])
         report = {"team": team.name, "workspace": ws, "lead": lead_pane, "plan": plan, "spawned": [], "failed": [],
                   "roster": None, "roster_state": None, "dry_run": dry_run}
@@ -214,6 +220,16 @@ def team_up(h, store, roles, team, lead_pane, settings, dry_run=False):
         data["project"] = project_dir()
         store.save(ws, data)
         cwd = lead_info.get("cwd") or lead_info.get("foreground_cwd")
+        if boot_lead:
+            role = roles[lead_slot.role]
+            try:
+                h.agent_start(agent_name(team, role.name, lead_slot.index, ws), lead_kind, lead_pane,
+                              timeout_ms=settings["spawn_timeout_ms"], agent_args=role.agent_args)
+                lead_info = {**lead_info, "agent": lead_kind, "agent_status": "idle"}
+            except HerdrError as e:
+                data["panes"][lead_pane].update(status="failed", error=str(e)[:300])
+                report["failed"].append({"role": role.name, "instance": lead_slot.index, "error": str(e)[:300]})
+            store.save(ws, data)
 
         remaining, chain_last = {}, {}
         for s in todo:
@@ -248,8 +264,8 @@ def team_up(h, store, roles, team, lead_pane, settings, dry_run=False):
                                       "status": data["panes"][pane]["status"], "retried": True})
 
         display.apply_all(h, data, roles)
-        if todo or retry:    # a no-op re-run must not poke the lead again with the same roster
-            report["roster"] = build_roster(team, roles, data, lead_pane)
+        if todo or retry or brief:    # a no-op re-run must not poke the lead again with the same roster
+            report["roster"] = build_roster(team, roles, data, lead_pane) + (f"\n\n{brief}" if brief else "")
             report["roster_state"] = _deliver_roster(h, data, lead_info, lead_pane, report["roster"])
         store.save(ws, data)
 

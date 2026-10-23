@@ -16,6 +16,12 @@ def last_output(h, pane_id, lines):
     return (blocks[-1] if blocks else text).strip()
 
 
+def last_block(h, pane_id, lines):
+    """The last <<<HANDOFF ... >>> block on the pane's screen, or None when it printed none."""
+    blocks = _MARKER.findall(h.pane_read(pane_id, lines=lines))
+    return blocks[-1].strip() if blocks else None
+
+
 def git_diff(cwd):
     if not cwd:
         return ""
