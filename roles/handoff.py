@@ -11,9 +11,14 @@ _MAX_FILE = 200_000
 
 def last_output(h, pane_id, lines):
     """Terminal text of the pane; if the agent printed a <<<HANDOFF ... >>> block, only its last block."""
+    return report_text(h, pane_id, lines)[0]
+
+
+def report_text(h, pane_id, lines):
+    """(text, is_block): the pane's last HANDOFF block, or its terminal text when it printed none."""
     text = h.pane_read(pane_id, lines=lines)
     blocks = _MARKER.findall(text)
-    return (blocks[-1] if blocks else text).strip()
+    return (blocks[-1] if blocks else text).strip(), bool(blocks)
 
 
 def last_block(h, pane_id, lines):

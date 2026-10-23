@@ -106,6 +106,13 @@ class MailTests(FakeEnv):
         self.assertLess(len(report), mail.REPORT_CHARS + 500)
         self.assertIn("read --role reviewer", report)
 
+    def test_a_long_handoff_block_keeps_its_beginning(self):
+        self.send("reviewer", "check", self.lead)
+        self.finish(self.rev, "<<<HANDOFF\nVERDICT: 2 bugs\n" + "z" * 6000 + "\nEND\n>>>")
+        report = self.prompts(self.lead)[-1]
+        self.assertIn("VERDICT: 2 bugs", report)
+        self.assertNotIn("END", report)
+
     # ---- members talking to each other
     def test_member_to_member_request_is_answered_and_copied_to_the_lead(self):
         self.send("reviewer", "review my diff", self.impl)
