@@ -82,7 +82,7 @@ roles fleet-down [이름]                      # 다 끝나고 사용자가 원�
 | `대상 pane을 알 수 없습니다` | herdr pane 밖에서 실행된 것입니다(`$HERDR_PANE_ID` 없음). herdr 안의 pane 에서 실행해야 한다고 사용자에게 알리세요. |
 | `설정된 역할이 없어 설정 창을 열었어요` | 사용자가 herdr 팝업에서 팀을 정해야 합니다. 답한 뒤 `roles team-up` 을 다시 실행하세요. |
 | `Python 3.11+ 가 필요한데` | 오류에 나온 해결법을 사용자에게 그대로 전하세요. |
-| 팀원이 `failed` | Claude 폴더 신뢰(trust) 질문일 수 있습니다. 그 pane 에서 사용자가 답한 뒤 `roles team-up` 을 다시 실행하세요. |
+| 팀원이 `failed` | Claude·Codex 폴더 신뢰(trust) 질문일 수 있습니다. 그 pane 에서 사용자가 답한 뒤 `roles team-up`(fleet 이면 `roles fleet-up <이름>`) 을 다시 실행하세요. 매번 답하기 번거롭다면 사용자에게 설정 `trust_folders = true` 를 안내하세요 (사용자가 원할 때만 켭니다). |
 
 ## 하지 말 것
 
