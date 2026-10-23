@@ -28,8 +28,8 @@ def ok(result):
     sys.exit(0)
 
 
-def fail(msg):
-    print(json.dumps({"id": "fake", "error": {"code": "fake", "message": msg}}))
+def fail(msg, code="fake"):
+    print(json.dumps({"id": "fake", "error": {"code": code, "message": msg}}))
     sys.exit(1)
 
 
@@ -41,7 +41,7 @@ def opt(name, default=None, many=False):
 
 
 def public(p):
-    return {k: v for k, v in p.items() if k not in ("output", "ran", "prompts", "meta", "agent_name")}
+    return {k: v for k, v in p.items() if k not in ("output", "ran", "prompts", "meta", "agent_name", "shell_starting")}
 
 
 s = load()
@@ -62,7 +62,8 @@ elif cmd == "pane split":
     s["next"][ws] = s["next"].get(ws, 1) + 1
     pid = f"{ws}:p{s['next'][ws]}"
     s["panes"][pid] = {"pane_id": pid, "workspace_id": ws, "cwd": opt("--cwd", target["cwd"]), "agent": None,
-                       "agent_status": "unknown", "output": "", "ran": [], "prompts": [], "meta": {}}
+                       "agent_status": "unknown", "output": "", "ran": [], "prompts": [], "meta": {},
+                       "shell_starting": s.get("slow_shells", 0)}
     s["splits"].append({"target": target["pane_id"], "direction": opt("--direction"),
                         "ratio": float(opt("--ratio")) if opt("--ratio") else None, "new": pid})
     save(s)
@@ -100,6 +101,10 @@ elif cmd == "agent start":
     p = s["panes"].get(opt("--pane")) or fail("pane not found")
     if not re.fullmatch(r"[a-z][a-z0-9_-]{0,31}", args[2]):     # the real herdr's rule
         fail("agent name must start with a lowercase letter and contain only lowercase letters, digits, '-' or '_'")
+    if p.get("shell_starting"):     # the shell has not reached its prompt yet: herdr refuses this many starts
+        p["shell_starting"] -= 1
+        save(s)
+        fail(f"agent target pane {p['pane_id']} is not an available shell", code="agent_pane_busy")
     if opt("--kind") in s.get("bad_kinds", []):
         fail(f"unsupported agent kind: {opt('--kind')}")
     p.update(agent=opt("--kind"), agent_status="idle", agent_name=args[2])
@@ -123,7 +128,7 @@ elif cmd in ("workspace create", "worktree create"):
     if cmd == "worktree create":
         cwd = f"/worktrees/{opt('--label')}/{opt('--branch')}"
     s["panes"][pid] = {"pane_id": pid, "workspace_id": ws, "cwd": cwd, "agent": None, "agent_status": "unknown",
-                       "output": "", "ran": [], "prompts": [], "meta": {}}
+                       "output": "", "ran": [], "prompts": [], "meta": {}, "shell_starting": s.get("slow_shells", 0)}
     s["next"][ws] = 1
     s.setdefault("workspaces", {})[ws] = {"label": opt("--label"), "focus": "--focus" in args}
     save(s)

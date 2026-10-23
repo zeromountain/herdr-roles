@@ -5,6 +5,7 @@ start, and never touches panes it did not create.
 """
 import os
 import re
+import time
 from dataclasses import dataclass
 
 from . import display, mail, trust
@@ -104,6 +105,23 @@ def member_briefing(team, roles, role):
     return "\n".join(lines)
 
 
+SHELL_WAIT_S = 20      # how long a new pane's shell may take to reach its prompt (oh-my-zsh, worktree setup ...)
+SHELL_POLL_S = 1
+
+
+def start_agent(h, name, kind, pane, settings, agent_args=()):
+    """`agent start`, retried while the pane's shell is still starting: a pane just split or a workspace just
+    created may not be at its prompt yet, and herdr then refuses with `agent_pane_busy`."""
+    deadline = time.monotonic() + SHELL_WAIT_S
+    while True:
+        try:
+            return h.agent_start(name, kind, pane, timeout_ms=settings["spawn_timeout_ms"], agent_args=agent_args)
+        except HerdrError as e:
+            if e.code != "agent_pane_busy" or time.monotonic() >= deadline:
+                raise
+        time.sleep(SHELL_POLL_S)
+
+
 def _start(h, data, pane, role, instance, team, ws, settings, roles, running=None):
     """Start the role's agent/command in an existing pane and record the outcome in state.
 
@@ -115,8 +133,7 @@ def _start(h, data, pane, role, instance, team, ws, settings, roles, running=Non
         if role.agent and running == role.agent:
             h.agent_prompt(pane, member_briefing(team, roles, role))
         elif role.agent:
-            h.agent_start(agent_name(team, role.name, instance, ws), role.agent, pane,
-                          timeout_ms=settings["spawn_timeout_ms"], agent_args=role.agent_args)
+            start_agent(h, agent_name(team, role.name, instance, ws), role.agent, pane, settings, role.agent_args)
             h.agent_prompt(pane, member_briefing(team, roles, role))
         elif role.command:
             h.pane_run(pane, role.command)
@@ -239,8 +256,8 @@ def team_up(h, store, roles, team, lead_pane, settings, dry_run=False, start_lea
         if boot_lead:
             role = roles[lead_slot.role]
             try:
-                h.agent_start(agent_name(team, role.name, lead_slot.index, ws), lead_kind, lead_pane,
-                              timeout_ms=settings["spawn_timeout_ms"], agent_args=role.agent_args)
+                start_agent(h, agent_name(team, role.name, lead_slot.index, ws), lead_kind, lead_pane, settings,
+                            role.agent_args)
                 lead_info = {**lead_info, "agent": lead_kind, "agent_status": "idle"}
             except HerdrError as e:
                 data["panes"][lead_pane].update(status="failed", error=str(e)[:300])
