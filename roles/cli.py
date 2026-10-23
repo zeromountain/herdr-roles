@@ -331,6 +331,18 @@ def cmd_send(args, h):
         print(f"sent to {args.role} ({pane})" + ("; 끝나면 결과가 이 pane 으로 보고됩니다" if how else ""))
 
 
+def cmd_report(args, h):
+    pane, ws = _where(h, args)
+    text = sys.stdin.read() if args.text in (None, "-") else args.text
+    roles, settings = config.load_roles(), config.load_settings()
+    try:
+        to, path = mail.report(h, Store(), roles, ws, pane, text, settings)
+    except ValueError as e:
+        raise CliError(str(e))
+    print(f"보고했습니다 → {', '.join(to)}" if to else "보고를 받을 사람이 없습니다 (요청한 사람도, 리드도 없음)")
+    print(f"전문: {path}")
+
+
 def cmd_read(args, h):
     _one_target(args)
     me, ws = _where(h, args)
@@ -611,6 +623,8 @@ def build_parser():
     s.add_argument("--role")
     s.add_argument("--fleet", metavar="팀이름", help="fleet 팀의 리드에게 요청 (보고는 이 pane 으로)")
     s.add_argument("--text", required=True, help="'-' 이면 stdin")
+    s = add("report", cmd_report, help="맡은 일의 결과를 보고 (요청한 쪽에, 없으면 리드·오케스트레이터에게). 전문은 파일로 남김")
+    s.add_argument("--text", help="보고 내용 (생략하거나 '-' 이면 stdin)")
     s = add("read", cmd_read, help="역할 pane(또는 fleet 팀 리드)의 최근 출력 읽기")
     s.add_argument("--role")
     s.add_argument("--fleet", metavar="팀이름")

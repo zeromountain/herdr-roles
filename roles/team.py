@@ -94,8 +94,8 @@ def member_briefing(team, roles, role):
         kind = " (셸 역할: 보낸 내용이 명령으로 실행됨)" if r and not r.agent else ""
         lines.append(f"- {m.role}{' (리드)' if m.lead else ''}{kind}: {_describe(r, limit=120)}")
     lines += ["", "일하는 방법:",
-              "- 지시는 \"[herdr-roles] <보낸 사람>의 요청\" 머리말로 옵니다. 끝나면 마지막에 결과 요약을 "
-              "<<<HANDOFF ... >>> 블록으로 남기세요. 보낸 사람에게 자동으로 보고됩니다.",
+              "- 지시는 \"[herdr-roles] <보낸 사람>의 요청\" 머리말로 옵니다. 끝나면 셸에서 결과를 보고하세요. "
+              f"보낸 사람에게 자동으로 보고됩니다 (긴 내용도 잘리지 않고 파일로 남습니다):\n  {mail.REPORT_HOWTO}",
               f'- 다른 역할에게 묻거나 넘길 일이 있으면 직접 요청하세요: {mail.CLI} send --role <역할> --text "<내용>"'
               " (답은 끝나는 대로 당신에게 오고, 리드에게는 한 줄 참조가 갑니다)",
               f'- 막히거나 리드의 결정이 필요하면: {mail.CLI} send --role {lead.name} --text "<상황>"']
