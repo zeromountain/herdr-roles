@@ -263,7 +263,9 @@ roles run --workflow feature --input "로그인 기능 추가"
 roles advance                    # 반자동 단계에서 다음 역할로 인계
 roles team-down                  # 스폰한 pane만 정리 (lead·직접 만든 pane은 유지)
 roles install [--force]          # roles 명령·에이전트 스킬 연결 (setup 이 자동 실행)
-roles setup --project            # 이 프로젝트 전용 팀을 .herdr-roles/ 에 만들기 (프로젝트별 설정 참고)
+roles setup --scope project      # 이 프로젝트 전용 팀을 .herdr-roles/ 에 (커밋해 공유. --project 와 같음)
+roles setup --scope user         # 이 프로젝트에서 나만 쓰는 설정을 .herdr-roles/local/ 에 (git 제외)
+roles config                     # 전역·프로젝트·사용자 계층과 각자 정의한 역할·팀·설정 보기
 roles fleet-up a b --task "…" --task "…"   # 이 pane = 오케스트레이터, 팀마다 새 workspace 로 병렬 팀 (fleet 참고)
 roles fleet / fleet-down [이름]            # fleet 팀 상태 / 닫기
 roles send --fleet a --text "…"           # fleet 팀 리드에게 요청 (read --fleet 도 같음)
@@ -302,7 +304,7 @@ lead가 `working`이면 로스터 주입을 보류했다가 idle이 될 때 전�
    `python3 ~/.config/herdr/plugins/github/herdr-roles-*/bin/roles install`. 출력에 PATH 경고가 있으면 안내된 한 줄을 실행하세요.
    0.1.x에서 올라오면 Claude Code·Codex 스킬이 이때 처음 연결됩니다.
 3. **에이전트 새로 시작**: Claude Code·Codex는 시작할 때만 스킬을 읽습니다.
-4. (선택) **프로젝트 전용 팀**: 필요한 저장소의 터미널에서 `roles setup --project`. 전역 설정은 그대로 둡니다.
+4. (선택) **프로젝트 전용 팀**: 필요한 저장소의 터미널에서 `roles setup --scope project`(공유) 또는 `--scope user`(나만). 전역 설정은 그대로 둡니다.
 
 따로 할 필요 없는 것:
 - **떠 있는 팀**: `team-down` 하지 않아도 됩니다. 훅은 이벤트마다 `bin/roles`를 새로 실행하므로 재설치 직후부터 새 코드를 씁니다.
@@ -344,26 +346,40 @@ lead가 `working`이면 로스터 주입을 보류했다가 idle이 될 때 전�
 `examples/`에 개발팀(5역할)과 `plan → build → review ⇄ fix` 워크플로우가 있습니다. 설정은 실행 전에 전부 검증됩니다
 (lead 1개, 정의된 역할, 앞선 멤버만 `of` 참조, 존재하는 `from` 등). 오류가 있으면 pane을 하나도 만들기 전에 실패합니다.
 
-### 프로젝트별 설정 (`.herdr-roles/`)
+### 설정 계층: 전역 · 프로젝트 · 사용자
 
-프로젝트마다 다른 팀을 쓰려면 저장소 루트에 `.herdr-roles/`를 두세요. 형식은 전역 설정 폴더와 같습니다.
+설정은 세 계층에 둘 수 있고, 아래 계층일수록 우선합니다. 세 곳 모두 형식(`roles.toml`, `config.toml`, `teams/`, `workflows/`)이 같습니다.
+
+| 계층 | 위치 | 용도 |
+|---|---|---|
+| 전역 | `~/.config/herdr/plugins/config/herdr-roles/` | 이 PC의 모든 저장소에서 쓰는 기본 역할·팀 |
+| 프로젝트 | `<git 루트>/.herdr-roles/` | 이 저장소의 팀 구성. 커밋하면 같은 저장소를 쓰는 사람과 공유 |
+| 사용자 | `<git 루트>/.herdr-roles/local/` | 이 저장소에서 **나만** 쓰는 덮어쓰기. 안에 `*` 짜리 `.gitignore` 를 만들어 커밋되지 않음 |
 
 ```sh
 cd ~/work/my-app
-roles setup --project      # 마법사 결과를 <git 루트>/.herdr-roles/ 에 저장 (전역 설정은 그대로)
-roles init --project       # 또는 예제를 복사해서 직접 고치기
+roles setup --scope project   # 마법사 결과를 <git 루트>/.herdr-roles/ 에 (예전 --project 와 같음)
+roles setup --scope user      # 마법사 결과를 <git 루트>/.herdr-roles/local/ 에
+roles init --scope user       # 또는 예제를 복사해서 직접 고치기 (--scope 는 init 에도 있음)
+roles config                  # 지금 폴더에서 적용되는 계층과 각 계층이 정의한 것 보기
 ```
+
+`--scope` 를 생략하면 전역에 저장합니다. 예를 들어 팀이 커밋한 `.herdr-roles/`는 그대로 두고, 나만 리뷰어를 Codex로 바꾸고
+싶다면 `.herdr-roles/local/roles.toml`에 그 역할만 적으면 됩니다.
 
 ```
 my-app/.herdr-roles/
 ├── roles.toml          # 이 프로젝트에만 있는 역할, 또는 전역 역할을 같은 이름으로 덮어쓰기
 ├── config.toml         # 예: default_team = "web"
 ├── teams/web.toml
-└── workflows/…
+├── workflows/…
+└── local/              # 사용자 계층 (git 제외)
+    ├── .gitignore
+    └── roles.toml      # 예: [roles.reviewer] agent = "codex"
 ```
 
-- **겹쳐 쓰기**: 전역 설정 위에 프로젝트 설정을 얹습니다. 역할·팀·워크플로우는 이름이 같으면 프로젝트 것이 이기고,
-  `config.toml`은 항목별로 프로젝트 값이 이깁니다. 그래서 프로젝트 팀이 전역 역할(예: `planner`)을 그대로 쓸 수 있고,
+- **겹쳐 쓰기**: 전역 위에 프로젝트, 그 위에 사용자 설정을 얹습니다. 역할·팀·워크플로우는 이름이 같으면 위 계층 것이 이기고,
+  `config.toml`은 항목별로 위 계층 값이 이깁니다. 그래서 프로젝트 팀이 전역 역할(예: `planner`)을 그대로 쓸 수 있고,
   프로젝트에는 바뀌는 것만 두면 됩니다.
 - **어느 프로젝트인지**: `team-up`은 리드 pane의 작업 폴더에서 위로 올라가며 가장 가까운 `.herdr-roles/`를 찾습니다.
   없으면 전역 설정만 씁니다. 팀원 pane도 리드와 같은 폴더에서 열립니다.
