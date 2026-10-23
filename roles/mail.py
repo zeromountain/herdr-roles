@@ -52,7 +52,10 @@ def lead_of(data):
 
 
 def first_line(text, limit=80):
-    line = next((ln.strip() for ln in (text or "").splitlines() if ln.strip()), "")
+    # a request wrapped in a HANDOFF block would otherwise be summarised as just its marker, and that summary is
+    # echoed in report headers on the asker's screen
+    text = (text or "").replace("<<<HANDOFF", "").replace(">>>", "")
+    line = next((ln.strip() for ln in text.splitlines() if ln.strip()), "")
     return line if len(line) <= limit else line[:limit - 1] + "…"
 
 
@@ -102,7 +105,7 @@ def send(h, data, roles, sender, target, text, live, origin=None, lines=200):
     `origin` ({pane, workspace}) is an orchestrator in another workspace asking this team's lead.
     """
     if origin:
-        prompt = orchestrator_request(text)
+        prompt = orchestrator_request(handoff.defuse(text))
         queued = (live.get(target) or {}).get("agent_status") == "working"
         if queued:
             data["outbox"].setdefault(target, []).append(prompt)
@@ -120,7 +123,7 @@ def send(h, data, roles, sender, target, text, live, origin=None, lines=200):
         return False
     me = who(data, roles, sender)
     prompt = (f"{TAG} {me}의 요청입니다. 끝나면 셸에서 결과를 보고하세요. {me}에게 자동으로 보고됩니다:\n"
-              f"{REPORT_HOWTO}\n\n{text}")
+              f"{REPORT_HOWTO}\n\n{handoff.defuse(text)}")
     ask = data["asks"].setdefault(target, {"from": [], "sent_at": now_ms(), "seen_working": False})
     # A busy target's next idle ends the task it is on, not this request: hold the request until that idle and
     # start tracking from there, or the old task's output would be reported as this answer.
@@ -143,6 +146,7 @@ def _report(h, data, roles, pane, askers, settings, out=None, path=None):
     """`out`/`path`: an explicit `roles report` (its text, and the file holding all of it); else read the screen."""
     p = data["panes"].get(pane) or {}
     out = clip(*handoff.report_text(h, pane, settings["handoff_lines"])) if out is None else clip(out, True)
+    out = handoff.defuse(out)
     me = who(data, roles, pane)
     more = f"(전체 보고: {path})" if path else f"(전체 출력: {CLI} read --role {p.get('role', '')} --lines 200)"
     askers = [a for a in askers if a["pane"] in data["panes"]]
@@ -155,18 +159,22 @@ def _report(h, data, roles, pane, askers, settings, out=None, path=None):
     return len(askers)
 
 
+def _members_working(h, data, lead):
+    try:
+        live = h.pane_list(data["workspace"])
+    except HerdrError:
+        return True
+    return any(p["pane_id"] != lead and p["pane_id"] in data["panes"] and p.get("agent_status") == "working"
+               for p in live)
+
+
 def _team_quiet(h, data, lead):
     """Nothing the lead handed out is still in flight: no open ask or queued message for another pane, nobody working."""
     if any(p != lead and ask.get("from") for p, ask in data["asks"].items()):
         return False
     if any(p != lead and msgs for p, msgs in data["outbox"].items()):
         return False
-    try:
-        live = h.pane_list(data["workspace"])
-    except HerdrError:
-        return False
-    return not any(p["pane_id"] != lead and p["pane_id"] in data["panes"] and p.get("agent_status") == "working"
-                   for p in live)
+    return not _members_working(h, data, lead)
 
 
 def _report_up(h, store, data, roles, pane, askers, block, is_block=True, path=None):
@@ -175,7 +183,7 @@ def _report_up(h, store, data, roles, pane, askers, block, is_block=True, path=N
     The caller already holds the session-wide state lock, which covers every workspace file.
     """
     name = (data.get("parent") or {}).get("name") or data.get("team") or ""
-    block = clip(block, is_block)
+    block = handoff.defuse(clip(block, is_block))
     me = who(data, roles, pane)
     for a in askers:
         ows = a["workspace"]
@@ -275,7 +283,11 @@ def on_status(h, store, roles, ws, pane, status, settings):
             local = []
         if up and ready:              # sticky: only a HANDOFF block the request did not find on screen answers it
             block = handoff.last_block(h, pane, lines)
+            # a block written while members still work is the lead handing them work (its `roles send --text
+            # "<<<HANDOFF ..."` echoed on screen), not its answer; the team's final idle reports it
             fresh = [a for a in up if block and block != a.get("baseline")]
+            if fresh and _members_working(h, data, pane):
+                fresh = []
             if not fresh and _team_quiet(h, data, pane):     # the lead forgot the block, but the team is done
                 # not report_text: a block still on screen is the *previous* answer; the screen's end is this one's
                 fresh, block, is_block = up, h.pane_read(pane, lines=lines).strip(), False
