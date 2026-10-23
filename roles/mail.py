@@ -22,6 +22,9 @@ ROOT = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)),
 CLI = f"python3 {os.path.join(ROOT, 'bin', 'roles')}"
 TAG = "[herdr-roles]"
 REPORT_CHARS = 3000
+# How an agent hands in its result. Shown in every request and briefing; the screen-based HANDOFF block stays as a
+# fallback for agents that forget (a long block scrolls off the screen herdr can read, a file never does).
+REPORT_HOWTO = f"{CLI} report <<'EOF'\n<한 일, 바뀐 파일, 남은 문제>\nEOF"
 
 
 def clip(text, is_block):
@@ -76,9 +79,9 @@ ORCHESTRATOR = "오케스트레이터"
 
 
 def orchestrator_request(text):
-    return (f"{TAG} {ORCHESTRATOR}의 요청입니다. 팀원에게 나눠 맡기고, 팀의 일이 모두 끝나면 마지막에 결과 요약을 "
-            f"<<<HANDOFF ... >>> 블록으로 남기세요. 그 블록이 {ORCHESTRATOR}에게 자동으로 보고됩니다 "
-            f"(팀원에게 일을 넘기고 기다리는 중에는 HANDOFF 블록을 쓰지 마세요).\n\n{text}")
+    return (f"{TAG} {ORCHESTRATOR}의 요청입니다. 팀원에게 나눠 맡기고, 팀의 일이 모두 끝나면 셸에서 결과를 보고하세요. "
+            f"{ORCHESTRATOR}에게 자동으로 보고됩니다 (팀원에게 일을 넘기고 기다리는 중에는 보고하지 마세요):\n"
+            f"{REPORT_HOWTO}\n\n{text}")
 
 
 def track_up(data, target, origin, text, queued, baseline):
@@ -116,8 +119,8 @@ def send(h, data, roles, sender, target, text, live, origin=None, lines=200):
         h.agent_prompt(target, text)
         return False
     me = who(data, roles, sender)
-    prompt = (f"{TAG} {me}의 요청입니다. 끝나면 마지막에 결과 요약을 <<<HANDOFF ... >>> 블록으로 "
-              f"남기세요. {me}에게 자동으로 보고됩니다.\n\n{text}")
+    prompt = (f"{TAG} {me}의 요청입니다. 끝나면 셸에서 결과를 보고하세요. {me}에게 자동으로 보고됩니다:\n"
+              f"{REPORT_HOWTO}\n\n{text}")
     ask = data["asks"].setdefault(target, {"from": [], "sent_at": now_ms(), "seen_working": False})
     # A busy target's next idle ends the task it is on, not this request: hold the request until that idle and
     # start tracking from there, or the old task's output would be reported as this answer.
@@ -136,11 +139,12 @@ def send(h, data, roles, sender, target, text, live, origin=None, lines=200):
     return "queued" if queued else "sent"
 
 
-def _report(h, data, roles, pane, askers, settings):
+def _report(h, data, roles, pane, askers, settings, out=None, path=None):
+    """`out`/`path`: an explicit `roles report` (its text, and the file holding all of it); else read the screen."""
     p = data["panes"].get(pane) or {}
-    out = clip(*handoff.report_text(h, pane, settings["handoff_lines"]))
+    out = clip(*handoff.report_text(h, pane, settings["handoff_lines"])) if out is None else clip(out, True)
     me = who(data, roles, pane)
-    more = f"(전체 출력: {CLI} read --role {p.get('role', '')} --lines 200)"
+    more = f"(전체 보고: {path})" if path else f"(전체 출력: {CLI} read --role {p.get('role', '')} --lines 200)"
     askers = [a for a in askers if a["pane"] in data["panes"]]
     for a in askers:
         post(h, data, a["pane"], f"{TAG} {me} 작업 완료 보고 (요청: {a['summary']})\n\n{out or '(출력 없음)'}\n\n{more}")
@@ -165,7 +169,7 @@ def _team_quiet(h, data, lead):
                    for p in live)
 
 
-def _report_up(h, store, data, roles, pane, askers, block, is_block=True):
+def _report_up(h, store, data, roles, pane, askers, block, is_block=True, path=None):
     """Deliver a fleet lead's new HANDOFF block to the orchestrator pane(s), queued in *their* workspace when busy.
 
     The caller already holds the session-wide state lock, which covers every workspace file.
@@ -176,14 +180,60 @@ def _report_up(h, store, data, roles, pane, askers, block, is_block=True):
     for a in askers:
         ows = a["workspace"]
         odata = data if ows == data["workspace"] else store.load(ows)
-        post(h, odata, a["pane"], f"{TAG} 팀 '{name}' {me} 작업 완료 보고 (요청: {a['summary']})\n\n{block}\n\n"
-                                  f"(리드 화면 전체: {CLI} read --fleet {name} --lines 200)")
+        more = f"(전체 보고: {path})" if path else f"(리드 화면 전체: {CLI} read --fleet {name} --lines 200)"
+        post(h, odata, a["pane"], f"{TAG} 팀 '{name}' {me} 작업 완료 보고 (요청: {a['summary']})\n\n{block}\n\n{more}")
         entry = odata["fleet"].get(name)
         if entry:
             entry.update(reports=entry.get("reports", 0) + 1, last_report=first_line(block), reported_at=now_ms())
         if odata is not data:
             store.save(ows, odata)
     return len(askers)
+
+
+def _save_report(store, ws, pane, text):
+    d = os.path.join(store.dir, "reports")
+    os.makedirs(d, exist_ok=True)
+    path = os.path.join(d, f"{ws}-{pane.replace(':', '_')}-{now_ms()}.md")
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(text.rstrip() + "\n")
+    return path
+
+
+def report(h, store, roles, ws, pane, text, settings):
+    """`roles report`: the agent in `pane` hands in its result explicitly. The whole text goes to a file; whoever is
+    waiting on this pane gets its beginning and the file's path. With nobody waiting, a member reports to its lead and
+    a fleet lead to its orchestrator. Returns (who got it, path)."""
+    if not text.strip():
+        raise ValueError("보고할 내용이 비어 있습니다.")
+    with store.lock():
+        data = store.load(ws)
+        path = _save_report(store, ws, pane, text)
+        ask = data["asks"].get(pane) or {"from": []}
+        delivered = [a for a in ask["from"] if not a.get("queued")]
+        local = [a for a in delivered if not a.get("sticky")]
+        up = [a for a in delivered if a.get("sticky")]
+        to = [who(data, roles, a["pane"]) for a in local] + [ORCHESTRATOR for _ in up[:1]]
+        if local:
+            _report(h, data, roles, pane, local, settings, out=text, path=path)
+        if up:
+            _report_up(h, store, data, roles, pane, up, text, path=path)
+        if not delivered:             # nobody asked: hand it to whoever is above this pane
+            lead, parent = lead_of(data), data.get("parent")
+            unasked = {"summary": "요청 없이 보고", "queued": False}
+            if lead == pane and parent:
+                _report_up(h, store, data, roles, pane, [{**unasked, "pane": parent["pane"],
+                                                          "workspace": parent["workspace"]}], text, path=path)
+                to = [ORCHESTRATOR]
+            elif lead and lead != pane:
+                _report(h, data, roles, pane, [{**unasked, "pane": lead}], settings, out=text, path=path)
+                to = [who(data, roles, lead)]
+        waiting = [a for a in ask["from"] if a.get("queued")]
+        if waiting:
+            ask["from"] = waiting
+        else:
+            data["asks"].pop(pane, None)
+        store.save(ws, data)
+    return to, path
 
 
 def _flush(h, data, pane):

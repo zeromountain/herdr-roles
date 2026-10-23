@@ -35,7 +35,7 @@ class MailTests(FakeEnv):
         self.assertIn("리드는 'Planner'(planner)", brief)
         self.assertIn("- implementer:", brief)
         self.assertNotIn("- reviewer:", brief)                  # not itself
-        self.assertIn("<<<HANDOFF", brief)
+        self.assertIn(f"{mail.CLI} report <<'EOF'", brief)
         self.assertIn(f"{mail.CLI} send --role <역할>", brief)
         self.assertIn("자동으로 보고됩니다", self.prompts(self.lead)[-1])     # the lead's roster says so too
 
@@ -119,6 +119,41 @@ class MailTests(FakeEnv):
         report = self.prompts(self.lead)[-1]
         self.assertIn("VERDICT: 2 bugs", report)
         self.assertNotIn("END", report)
+
+    # ---- explicit `roles report`
+    def report(self, pane, text):
+        code, out, err = self.run_cli("report", "--text", text, "--pane", pane)
+        self.assertEqual(code, 0, err)
+        return out
+
+    def test_report_answers_the_request_and_keeps_the_whole_text_in_a_file(self):
+        self.send("reviewer", "check", self.lead)
+        self.event(self.rev, "working")
+        body = "VERDICT: 2 bugs\n" + "z" * 6000 + "\nEND"
+        out = self.report(self.rev, body)
+        self.assertIn("Planner(planner, 리드)", out)
+        path = out.split("전문: ")[1].strip()
+        with open(path) as f:
+            self.assertEqual(f.read(), body + "\n")
+        msg = self.prompts(self.lead)[-1]
+        self.assertIn("VERDICT: 2 bugs", msg)
+        self.assertNotIn("END", msg)
+        self.assertIn(path, msg)
+        self.assertEqual(self.store.load("w1")["asks"], {})
+        before = len(self.prompts(self.lead))
+        self.set_output(self.rev, "<<<HANDOFF\nsomething else\n>>>")
+        self.event(self.rev, "idle")                       # the turn ends after the report: no second report
+        self.assertEqual(len(self.prompts(self.lead)), before)
+
+    def test_an_unasked_report_goes_to_the_lead(self):
+        self.report(self.impl, "refactored auth.py")
+        self.assertIn("refactored auth.py", self.prompts(self.lead)[-1])
+        self.assertIn("요청 없이 보고", self.prompts(self.lead)[-1])
+
+    def test_an_empty_report_is_refused(self):
+        code, _, err = self.run_cli("report", "--text", "  ", "--pane", self.rev)
+        self.assertEqual(code, 1)
+        self.assertIn("비어 있습니다", err)
 
     # ---- members talking to each other
     def test_member_to_member_request_is_answered_and_copied_to_the_lead(self):

@@ -282,3 +282,26 @@ class FleetTests(FakeEnv):
         self.set_output(lead, mail.orchestrator_request("finish it") + "\n<<<HANDOFF\nreal summary\n>>>")
         self.event(lead, "idle")
         self.assertIn("real summary", self.prompts(self.orch)[-1])
+
+    def test_a_lead_reports_with_the_command(self):
+        lead, _ = self.launch_two()
+        self.assertIn(f"{mail.CLI} report <<'EOF'", self.prompts(lead)[0])
+        rev = self.delegate(lead)
+        self.event(lead, "working")
+        code, out, err = self.run_cli("report", "--text", "login done\n" + "q" * 5000, "--pane", lead)
+        self.assertEqual(code, 0, err)
+        self.assertIn(mail.ORCHESTRATOR, out)
+        msg = self.prompts(self.orch)[-1]
+        self.assertIn("팀 'auth'", msg)
+        self.assertIn("login done", msg)
+        self.assertIn("전체 보고: ", msg)
+        self.assertEqual(self.fleet()["auth"]["reports"], 1)
+        self.event(lead, "idle")                                           # no second report from the screen
+        self.assertEqual(len(self.prompts(self.orch)), 1)
+
+    def test_an_unasked_lead_report_goes_to_the_orchestrator(self):
+        self.up("auth")                                                    # launched without a task
+        lead = self.fleet()["auth"]["lead"]
+        code, _, err = self.run_cli("report", "--text", "question: which DB?", "--pane", lead)
+        self.assertEqual(code, 0, err)
+        self.assertIn("question: which DB?", self.prompts(self.orch)[-1])
