@@ -23,6 +23,12 @@ class FleetTests(FakeEnv):
     def fleet(self):
         return self.store.load("w1")["fleet"]
 
+    def delegate(self, lead, role="reviewer"):
+        """The lead hands part of the request to a member (which keeps the team busy until it answers)."""
+        code, _, err = self.run_cli("send", "--role", role, "--text", "part of it", "--pane", lead)
+        self.assertEqual(code, 0, err)
+        return self.pane_of(role, self.store.load(lead.split(":")[0]))
+
     def launch_two(self):
         self.up("auth", "billing", "--task", "build login", "--task", "fix invoices")
         return self.fleet()["auth"]["lead"], self.fleet()["billing"]["lead"]
@@ -81,17 +87,42 @@ class FleetTests(FakeEnv):
     def test_a_lead_that_delegates_and_goes_idle_does_not_report(self):
         lead, _ = self.launch_two()
         self.event(lead, "working")
-        self.set_output(lead, "sent tasks to implementer and reviewer")
+        rev = self.delegate(lead)
+        self.set_output(lead, "sent tasks to the reviewer")
         self.event(lead, "idle")
         self.assertEqual(self.prompts(self.orch), [])
         ws = self.fleet()["auth"]["workspace"]
         self.assertIn(lead, self.store.load(ws)["asks"])
+        self.event(rev, "working")                                         # the member answers the lead ...
+        self.set_output(rev, "<<<HANDOFF\nreviewed\n>>>")
+        self.event(rev, "idle")
+        self.assertEqual(self.prompts(self.orch), [])
+        self.event(lead, "working")                                        # ... and the lead wraps up, no block
+        self.set_output(lead, "all done: login works")
+        self.event(lead, "idle")
+        self.assertIn("all done: login works", self.prompts(self.orch)[-1])  # quiet team: its last output counts
+
+    def test_a_lead_that_works_alone_and_forgets_the_block_still_reports(self):
+        lead, _ = self.launch_two()
+        self.event(lead, "working")
+        self.set_output(lead, "wrote docs/design/api.md")
+        self.event(lead, "idle")
+        self.assertIn("wrote docs/design/api.md", self.prompts(self.orch)[-1])
+
+    def test_a_working_member_keeps_the_team_busy(self):
+        lead, _ = self.launch_two()
+        rev = self.pane_of("reviewer", self.store.load(self.fleet()["auth"]["workspace"]))
+        self.event(lead, "working")
+        self.set_status(rev, "working")                                    # busy on something the lead started
+        self.event(lead, "idle")
+        self.assertEqual(self.prompts(self.orch), [])
 
     def test_the_leads_handoff_block_is_reported_to_the_orchestrator(self):
         lead, _ = self.launch_two()
         self.event(lead, "working")
+        self.delegate(lead)
         self.event(lead, "idle")                                           # delegated, no block yet
-        self.event(lead, "working")                                        # a member's report came in
+        self.event(lead, "working")                                        # still busy with the team
         self.set_output(lead, "noise <<<HANDOFF\nlogin done, 3 files\n>>>")
         self.event(lead, "idle")
         report = self.prompts(self.orch)[-1]
@@ -100,7 +131,7 @@ class FleetTests(FakeEnv):
         self.assertIn("login done, 3 files", report)
         self.assertNotIn("noise", report)
         self.assertIn("read --fleet auth", report)
-        self.assertEqual(self.store.load(self.fleet()["auth"]["workspace"])["asks"], {})
+        self.assertNotIn(lead, self.store.load(self.fleet()["auth"]["workspace"])["asks"])
         self.assertEqual(self.fleet()["auth"]["reports"], 1)
 
     def test_an_old_block_on_screen_does_not_answer_a_new_request(self):
@@ -113,6 +144,7 @@ class FleetTests(FakeEnv):
         self.assertEqual(code, 0, err)
         self.assertIn("now add logout", self.prompts(lead)[-1])
         self.event(lead, "working")
+        self.delegate(lead)
         self.event(lead, "idle")                                           # the first block is still on screen
         self.assertEqual(len(self.prompts(self.orch)), 1)
         self.set_output(lead, "<<<HANDOFF\nfirst result\n>>> ... <<<HANDOFF\nlogout done\n>>>")
@@ -144,6 +176,7 @@ class FleetTests(FakeEnv):
         self.assertIn("(요청: build login)", self.prompts(self.orch)[-1])  # the first request is answered
         self.assertTrue(self.prompts(lead)[-1].endswith("second"))          # then the held one goes out
         self.event(lead, "working")
+        self.delegate(lead)
         self.event(lead, "idle")                                           # same block: not the answer to "second"
         self.assertEqual(len(self.prompts(self.orch)), 1)
         self.set_output(lead, "<<<HANDOFF\nsecond answer\n>>>")
