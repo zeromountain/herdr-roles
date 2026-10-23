@@ -182,6 +182,7 @@ def load_settings(cdir=None):
         "handoff_lines": int(data.get("handoff_lines", 200)),
         "spawn_timeout_ms": int(data.get("spawn_timeout_ms", 60000)),
         "idle_grace_s": int(data.get("idle_grace_s", 10)),
+        "trust_folders": bool(data.get("trust_folders", False)),
     }
 
 

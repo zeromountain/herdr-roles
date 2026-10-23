@@ -7,7 +7,7 @@ import os
 import re
 from dataclasses import dataclass
 
-from . import display, mail
+from . import display, mail, trust
 from .config import project_dir
 from .herdr import HerdrError
 
@@ -234,6 +234,8 @@ def team_up(h, store, roles, team, lead_pane, settings, dry_run=False, start_lea
         data["project"] = project_dir()
         store.save(ws, data)
         cwd = lead_info.get("cwd") or lead_info.get("foreground_cwd")
+        if settings.get("trust_folders") and (boot_lead or todo or retry):
+            report["trusted"] = trust.ensure(cwd, [roles[x.role].agent for x in slots if roles[x.role].agent])
         if boot_lead:
             role = roles[lead_slot.role]
             try:
