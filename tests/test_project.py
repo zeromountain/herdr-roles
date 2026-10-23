@@ -183,3 +183,49 @@ class ProjectTests(FakeEnv):
         code, _, err = self.run_cli("init", "--project")
         self.assertEqual(code, 0, err)
         self.assertTrue(os.path.exists(os.path.join(root, ".herdr-roles", "teams", "dev.toml")))
+
+    # ---- the user layer (<repo>/.herdr-roles/local/)
+    def test_user_layer_wins_over_project_and_global(self):
+        local = os.path.join(self.proj, "local")
+        self.write(local, "roles.toml", '[roles.reviewer]\nlabel = "My Reviewer"\nagent = "codex"\n')
+        self.write(local, "config.toml", '[settings]\ndefault_team = "dev"\nidle_grace_s = 3\n')
+        config.set_project(self.proj)
+        roles, settings = config.load_roles(), config.load_settings()
+        self.assertEqual((roles["reviewer"].label, roles["reviewer"].agent), ("My Reviewer", "codex"))
+        self.assertEqual(roles["designer"].label, "Designer")                # still from the project
+        self.assertEqual(roles["planner"].agent, "claude")                   # still from global
+        self.assertEqual((settings["default_team"], settings["idle_grace_s"]), ("dev", 3))
+        self.assertEqual(config.list_names("teams"), ["dev", "web"])
+
+    def test_setup_user_scope_writes_into_local_and_keeps_it_out_of_git(self):
+        root = self.git_project()
+        with mock.patch.object(setup, "_terminal_input", return_value=scripted(TOSS_DEFAULTS)):
+            code, out, err = self.run_cli("setup", "--scope", "user")
+        self.assertEqual(code, 0, err)
+        local = os.path.join(root, ".herdr-roles", "local")
+        self.assertTrue(os.path.exists(os.path.join(local, "teams", "toss-silo.toml")))
+        self.assertFalse(os.path.exists(os.path.join(root, ".herdr-roles", "roles.toml")))   # project layer untouched
+        self.assertIn("사용자 설정", out)
+        status = subprocess.run(["git", "-C", root, "status", "--porcelain", "--untracked-files=all"],
+                                capture_output=True, text=True).stdout
+        self.assertNotIn("local/", status)
+        self.assertIn(".gitignore", os.listdir(local))
+
+    def test_init_user_scope_and_flag_conflicts(self):
+        root = self.git_project()
+        code, _, err = self.run_cli("init", "--scope", "user")
+        self.assertEqual(code, 0, err)
+        self.assertTrue(os.path.exists(os.path.join(root, ".herdr-roles", "local", "teams", "dev.toml")))
+        code, _, err = self.run_cli("init", "--project", "--scope", "user")
+        self.assertEqual(code, 1)
+        self.assertIn("--scope project", err)
+
+    def test_config_shows_every_layer(self):
+        self.write(os.path.join(self.proj, "local"), "config.toml", '[settings]\ndefault_team = "dev"\n')
+        code, out, err = self.run_cli("config", env={"HERDR_PANE_ID": "w1:p1"})
+        self.assertEqual(code, 0, err)
+        self.assertIn(f"[전역] {self.cfg}", out)
+        self.assertIn(f"[프로젝트] {self.proj}", out)
+        self.assertIn(f"[사용자] {os.path.join(self.proj, 'local')}", out)
+        self.assertIn("팀: web", out)
+        self.assertIn("default_team=dev", out.splitlines()[-1])           # the user layer wins
